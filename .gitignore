@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Local secrets and Samsung state
+.env
+.env.*
+!.env.example
+state.json
+state.json.lock
+pending.json
+pending.json.lock
+redirect.uri
+.login-url.json
+*.cookie
+*.token
+
+# Default application state, if a user runs from the repository
+.config/
+
+# Local tooling and generated artifacts
+*.zip
+*.tar.gz
+coverage.xml
+.coverage
+htmlcov/
+frontend-audit.txt
+.DS_Store
+.idea/
+.vscode/

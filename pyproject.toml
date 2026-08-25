@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "samsung-find-agent"
+version = "0.1.0"
+description = "Persistent Samsung SmartThings Find client and AI-agent skills"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "Hermes Agent"}]
+keywords = ["samsung", "smartthings-find", "ai-agent", "device-location", "automation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Home Automation",
+]
+dependencies = [
+  "cryptography>=42",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "pytest>=8",
+  "respx>=0.21",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+samsung-find = "samsung_find.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/charlesbel/samsung-find-agent"
+Repository = "https://github.com/charlesbel/samsung-find-agent"
+Issues = "https://github.com/charlesbel/samsung-find-agent/issues"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
