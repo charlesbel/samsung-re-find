@@ -56,9 +56,11 @@ A `401` or `403` causes one forced refresh and one retry. If refresh fails, the 
 
 Phones and several remote operations remain available through `smartthingsfind.samsung.com`. The project found that the master token can authorize the web Find client, after which the returned short-lived code can be exchanged through `login.do` for a `JSESSIONID`.
 
+The current frontend requires a server-side login bootstrap before that exchange. The client first calls `getState.do?payload=hound`, retains the bootstrap `JSESSIONID` in the same HTTP cookie jar, and passes the returned opaque `state` unchanged to `login.do`. A caller-generated random state can still yield a replacement cookie, but `chkLogin.do` rejects it with `fail` and `init.do` treats it as logged out. The bootstrap state is transient and is never persisted.
+
 The web bridge is intentionally authorized without PKCE. In live testing, including a PKCE challenge produced a cookie that existed but failed `chkLogin.do`; omitting PKCE produced an authenticated session with a valid `_csrf` response header.
 
-The client validates every cached web cookie before use. An invalid cookie is discarded and rebuilt from the master token without asking for the account password again.
+The client validates every cached web cookie before use. An invalid cookie is discarded and rebuilt from the master token, the server-issued login state, and the bootstrap cookie without asking for the account password again.
 
 ## Local state and concurrency
 

@@ -189,7 +189,8 @@ class SamsungAuth:
 
         The web OAuth client does not use PKCE. Supplying a code challenge here
         creates a code that login.do cannot redeem, yielding a cookie that looks
-        present but is unauthenticated.
+        present but is unauthenticated. The login exchange must also preserve the
+        server state and bootstrap cookie issued by getState.do.
         """
         with locked(self.state_path):
             state = read_json(self.state_path)
@@ -227,13 +228,21 @@ class SamsungAuth:
             auth_host = urllib.parse.urlparse(state["auth_server_url"]).netloc
             with httpx.Client(timeout=30.0, follow_redirects=True) as web:
                 response = web.get(
+                    "https://smartthingsfind.samsung.com/getState.do",
+                    params={"payload": "hound"},
+                )
+                self._raise(response, "web Find state bootstrap")
+                login_state = response.json().get("state")
+                if not login_state:
+                    raise SamsungAuthError("Samsung omitted the web Find login state")
+                response = web.get(
                     "https://smartthingsfind.samsung.com/login.do",
                     params={
                         "auth_server_url": auth_host,
                         "api_server_url": auth_host,
                         "code": code,
                         "code_expires_in": auth_data.get("code_expires_in", 300),
-                        "state": random_urlsafe(12),
+                        "state": login_state,
                     },
                 )
                 self._raise(response, "web Find session exchange")

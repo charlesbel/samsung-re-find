@@ -51,10 +51,16 @@ Persistent userauth_token
         |
         +--> SmartThings access + rotating refresh token
         |
-        +--> regenerated SmartThings Find JSESSIONID
+        +--> SmartThings Find getState.do bootstrap
                          |
                          v
-              device list and web operations
+             server-issued login state + bootstrap cookie
+                         |
+                         v
+              regenerated authenticated JSESSIONID
+                         |
+                         v
+                  device list and web operations
 ```
 
 Normal recovery order:
@@ -62,7 +68,7 @@ Normal recovery order:
 1. Reuse a non-expired scoped access token.
 2. Rotate the single-use refresh token under an exclusive file lock.
 3. If refresh is no longer possible, issue a new scoped pair from the master token.
-4. Validate the cached web cookie; if invalid, create a new web session from the master token.
+4. Validate the cached web cookie; if invalid, bootstrap a server-issued login state and cookie through `getState.do`, then create a new web session from the master token using the same cookie jar.
 5. Retry a failed authenticated request once after `401` or `403`.
 
 This avoids periodic manual login, but it cannot survive explicit logout, master-token revocation, account-security changes, or incompatible Samsung protocol changes. See [Persistent authentication design](docs/authentication.md) for the complete flow.

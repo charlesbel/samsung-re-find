@@ -51,7 +51,7 @@ If the OS cannot open the `ms-app://` callback, the user may capture the complet
 
 ## Normal expiration
 
-Do not repeat interactive login for ordinary access-token, refresh-token, or web-cookie expiration. The client rotates scoped refresh tokens and reissues them from the master token; it also regenerates the web session from the same master token.
+Do not repeat interactive login for ordinary access-token, refresh-token, or web-cookie expiration. The client rotates scoped refresh tokens and reissues them from the master token; it also regenerates the web session from the same master token. Current web-session recovery first obtains an opaque server state and bootstrap cookie from `getState.do`, then reuses both through `login.do`; never substitute a caller-generated random state.
 
 ## Interactive login is required again when
 

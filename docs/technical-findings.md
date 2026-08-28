@@ -12,7 +12,7 @@ VityaSchel documented the legacy web operations endpoint and demonstrated `RING`
 
 ### Master-token-to-web-session bridge
 
-A master `userauth_token` can authorize the SmartThings Find web client and create a fresh authenticated `JSESSIONID`. This allows the legacy phone/device web API to recover from ordinary cookie expiration without storing a Samsung password or repeating two-factor authentication.
+A master `userauth_token` can authorize the SmartThings Find web client and create a fresh authenticated `JSESSIONID`. The current frontend first requires `getState.do` to issue both an opaque login state and a bootstrap cookie; `login.do` must receive that exact state through the same cookie jar. A random caller-generated state now produces a cookie that fails `chkLogin.do`. Preserving the frontend bootstrap sequence allows the legacy phone/device web API to recover from ordinary cookie expiration without storing a Samsung password or repeating two-factor authentication.
 
 ### Direct active location operation
 
@@ -51,7 +51,7 @@ The web response may contain `LOCATION`, `LASTLOC`, or `OFFLINE_LOC` entries. Th
 | Master token persistence | Yes | Yes | Yes | Root for scoped token and web-session recovery |
 | Access-token refresh rotation | Yes | Yes | Yes | New refresh token replaces the old one |
 | Reissue after dead refresh token | Yes | Yes | Yes | Uses the master token |
-| Web-session regeneration | Yes | Partial | Yes | Validated through `chkLogin.do` and `_csrf` |
+| Web-session regeneration | Yes | Yes | Yes | `getState.do` bootstrap; validated through `chkLogin.do` and `_csrf` |
 | Device listing | Yes | Yes | Yes | Internal IDs hidden by default in CLI output |
 | Passive location read | Yes | Yes | Yes | May be stale; inspect `age_seconds` |
 | Direct active `LOCATION` | Yes | Yes | Yes | Fresh fix observed on a recent Galaxy phone |
