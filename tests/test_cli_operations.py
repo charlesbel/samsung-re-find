@@ -1,6 +1,8 @@
+import json
+
 import pytest
 
-from samsung_find.cli import parser
+from samsung_find.cli import main, parser
 
 
 def test_locate_uses_extended_polling_by_default():
@@ -40,3 +42,34 @@ def test_public_defaults_are_global_and_device_ids_are_opt_in():
 
     with_ids = parser().parse_args(["devices", "--include-ids"])
     assert with_ids.include_ids is True
+
+
+def test_cli_usage_error_produces_json_envelope_on_stdout(capsys):
+    ret = main(["--unknown-option"])
+    assert ret == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""  # No usage prose on stderr
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["schema_version"] == "1.0"
+    assert payload["error"]["code"] == "invalid_arguments"
+
+
+def test_cli_missing_required_args_produces_json_envelope(capsys):
+    ret = main(["ring", "Primary Galaxy Phone"])
+    assert ret == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_arguments"
+
+
+def test_cli_unknown_command_produces_json_envelope(capsys):
+    ret = main(["non-existent-subcommand"])
+    assert ret == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_arguments"

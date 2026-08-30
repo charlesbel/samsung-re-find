@@ -26,6 +26,15 @@ from .serialization import serialize_error, serialize_response, to_json
 from .storage import secure_read_text
 
 
+class SamsungFindArgumentParser(argparse.ArgumentParser):
+    """Custom ArgumentParser that emits structured JSON envelopes on error in machine mode."""
+
+    def error(self, message: str) -> None:
+        payload = serialize_error(code="invalid_arguments", message=message)
+        print(to_json(payload))
+        sys.exit(2)
+
+
 def emit(value: object, *, legacy_json: bool = False) -> None:
     if legacy_json:
         print(to_json(value))
@@ -34,7 +43,7 @@ def emit(value: object, *, legacy_json: bool = False) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="samsung-find", description="Samsung Find CLI and tools")
+    root = SamsungFindArgumentParser(prog="samsung-find", description="Samsung Find CLI and tools")
     root.add_argument("--legacy-json", action="store_true", help="Output raw legacy JSON without v1 envelope")
     root.add_argument("--master-state", default=None, help="Path to shared Samsung master state v1")
     root.add_argument("--state", default=DEFAULT_STATE_PATH)
@@ -43,7 +52,7 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--country", default=os.environ.get("SAMSUNG_FIND_COUNTRY", "US"))
     root.add_argument("--language", default=os.environ.get("SAMSUNG_FIND_LANGUAGE", "en"))
     root.add_argument("--timezone", default=os.environ.get("SAMSUNG_FIND_TIMEZONE", "UTC"))
-    commands = root.add_subparsers(dest="command", required=True)
+    commands = root.add_subparsers(dest="command", required=True, parser_class=SamsungFindArgumentParser)
     commands.add_parser("install-handler", help="Register a private ms-app:// redirect catcher")
     start = commands.add_parser("auth-start", help="Generate the Samsung Account login URL")
     start.add_argument("--country", default="us")
@@ -113,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parser().parse_args(argv)
     except SystemExit as exc:
-        return 2 if exc.code != 0 else 0
+        return int(exc.code) if isinstance(exc.code, int) else 2
 
     auth = SamsungAuth(args.state, args.pending, master_path=args.master_state)
     client: SamsungFindClient | None = None
@@ -162,7 +171,12 @@ def main(argv: list[str] | None = None) -> int:
                 emit(client.check_connection(args.query, poll_seconds=args.poll_seconds), legacy_json=legacy)
             elif args.command == "ring":
                 emit(
-                    client.ring(args.query, status=args.status, message=args.message, poll_seconds=args.poll_seconds),
+                    client.ring(
+                        args.query,
+                        status=args.status,
+                        message=args.message,
+                        poll_seconds=args.poll_seconds,
+                    ),
                     legacy_json=legacy,
                 )
             elif args.command == "track":

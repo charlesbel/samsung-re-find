@@ -22,6 +22,50 @@ from .serialization import serialize_error, serialize_response, to_serializable
 from .service import FindService
 
 
+def _validate_query(raw: Any) -> str:
+    if not isinstance(raw, str):
+        raise ValueError("query must be a non-empty string between 1 and 256 characters")
+    cleaned = raw.strip()
+    if not (1 <= len(cleaned) <= 256):
+        raise ValueError("query must be a non-empty string between 1 and 256 characters")
+    return cleaned
+
+
+def _validate_poll_seconds(raw: Any, default: int = 180) -> int:
+    if raw is None:
+        return default
+    try:
+        val = int(raw)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("poll_seconds must be an integer between 1 and 600") from exc
+    if not (1 <= val <= 600):
+        raise ValueError("poll_seconds must be an integer between 1 and 600")
+    return val
+
+
+def _validate_message(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or len(raw) > 256:
+        raise ValueError("message must be a string up to 256 characters")
+    return raw
+
+
+def _validate_status(raw: Any) -> str:
+    status = str(raw or "start").lower().strip()
+    if status not in ("start", "stop"):
+        raise ValueError("status must be 'start' or 'stop'")
+    return status
+
+
+def _validate_enabled(raw: Any) -> bool:
+    if raw is True:
+        return True
+    if raw is False:
+        return False
+    raise ValueError("enabled must be a boolean (True or False)")
+
+
 class SamsungFindMCPServer:
     """In-process MCP Server adapter for Samsung Find."""
 
@@ -97,9 +141,10 @@ class SamsungFindMCPServer:
         if "ring" in self.allow_effects or "all" in self.allow_effects:
             self._tools["samsung_find_ring"] = {
                 "name": "samsung_find_ring",
-                "description": "Audibly ring a device or stop ringing alarm.",
+                "description": "Audibly ring a device or stop ringing alarm. Requires confirm: true.",
                 "parameters": {
                     "query": {"type": "string", "description": "Device name or identifier", "required": True},
+                    "confirm": {"type": "boolean", "description": "Explicit user confirmation", "required": True},
                     "status": {"type": "string", "enum": ["start", "stop"], "default": "start"},
                     "message": {"type": "string", "description": "Optional ring message"},
                     "poll_seconds": {"type": "integer", "default": 40},
@@ -111,9 +156,10 @@ class SamsungFindMCPServer:
         if "tracking" in self.allow_effects or "track" in self.allow_effects or "all" in self.allow_effects:
             self._tools["samsung_find_set_tracking"] = {
                 "name": "samsung_find_set_tracking",
-                "description": "Toggle continuous lost-mode location tracking for a device.",
+                "description": "Toggle continuous lost-mode location tracking for a device. Requires confirm: true.",
                 "parameters": {
                     "query": {"type": "string", "description": "Device name or identifier", "required": True},
+                    "confirm": {"type": "boolean", "description": "Explicit user confirmation", "required": True},
                     "enabled": {
                         "type": "boolean",
                         "description": "True to start tracking, False to stop",
@@ -141,51 +187,39 @@ class SamsungFindMCPServer:
         return [d.to_dict(include_id=include_ids) for d in devices]
 
     def _handle_get_capabilities(self, args: dict[str, Any]) -> Any:
-        query = str(args.get("query", "")).strip()
-        if not query:
-            raise ValueError("query parameter is required")
+        query = _validate_query(args.get("query"))
         service = self.get_service()
         return service.get_capabilities(query).to_dict()
 
     def _handle_get_last_location(self, args: dict[str, Any]) -> Any:
-        query = str(args.get("query", "")).strip()
-        if not query:
-            raise ValueError("query parameter is required")
+        query = _validate_query(args.get("query"))
         service = self.get_service()
         return service.get_last_location(query).to_dict()
 
     def _handle_request_location(self, args: dict[str, Any]) -> Any:
-        query = str(args.get("query", "")).strip()
-        if not query:
-            raise ValueError("query parameter is required")
-        poll_seconds = int(args.get("poll_seconds", 180))
+        query = _validate_query(args.get("query"))
+        poll_seconds = _validate_poll_seconds(args.get("poll_seconds"), default=180)
         service = self.get_service()
         return service.request_location(query, poll_seconds=poll_seconds).to_dict()
 
     def _handle_check_connection(self, args: dict[str, Any]) -> Any:
-        query = str(args.get("query", "")).strip()
-        if not query:
-            raise ValueError("query parameter is required")
-        poll_seconds = int(args.get("poll_seconds", 40))
+        query = _validate_query(args.get("query"))
+        poll_seconds = _validate_poll_seconds(args.get("poll_seconds"), default=40)
         service = self.get_service()
         return service.check_connection(query, poll_seconds=poll_seconds).to_dict()
 
     def _handle_ring(self, args: dict[str, Any]) -> Any:
-        query = str(args.get("query", "")).strip()
-        if not query:
-            raise ValueError("query parameter is required")
-        status = str(args.get("status", "start"))
-        message = args.get("message")
-        poll_seconds = int(args.get("poll_seconds", 40))
+        query = _validate_query(args.get("query"))
+        status = _validate_status(args.get("status"))
+        message = _validate_message(args.get("message"))
+        poll_seconds = _validate_poll_seconds(args.get("poll_seconds"), default=40)
         service = self.get_service()
         return service.ring(query, status=status, message=message, poll_seconds=poll_seconds).to_dict()
 
     def _handle_set_tracking(self, args: dict[str, Any]) -> Any:
-        query = str(args.get("query", "")).strip()
-        if not query:
-            raise ValueError("query parameter is required")
-        enabled = bool(args.get("enabled", True))
-        poll_seconds = int(args.get("poll_seconds", 30))
+        query = _validate_query(args.get("query"))
+        enabled = _validate_enabled(args.get("enabled"))
+        poll_seconds = _validate_poll_seconds(args.get("poll_seconds"), default=30)
         service = self.get_service()
         return service.set_tracking(query, enabled=enabled, poll_seconds=poll_seconds).to_dict()
 
@@ -203,9 +237,19 @@ class SamsungFindMCPServer:
             )
 
         tool_meta = self._tools[name]
+
+        # Side-effect tools require explicit per-call confirm: true
+        if tool_meta.get("is_effect") and arguments.get("confirm") is not True:
+            return serialize_error(
+                code="confirmation_required",
+                message=f"Side-effect tool {name!r} requires explicit confirm=true parameter",
+            )
+
         try:
             raw_result = tool_meta["handler"](arguments)
             return serialize_response(to_serializable(raw_result))
+        except ValueError as exc:
+            return serialize_error(code="invalid_parameter", message=str(exc))
         except AuthError as exc:
             return serialize_error(code=exc.code, message=str(exc))
         except (SecurityError, StorageError) as exc:
@@ -214,8 +258,8 @@ class SamsungFindMCPServer:
             return serialize_error(code=exc.code, message=str(exc))
         except NetworkError as exc:
             return serialize_error(code=exc.code, message=str(exc))
-        except Exception as exc:
-            return serialize_error(code="execution_error", message=str(exc))
+        except Exception:
+            return serialize_error(code="internal_error", message="An internal execution error occurred")
 
 
 def create_mcp_server(
@@ -325,6 +369,7 @@ def main(argv: list[str] | None = None) -> int:
                 @mcp_app.tool(name=tool_name, description=desc)
                 def handle_ring(
                     query: str,
+                    confirm: bool,
                     status: str = "start",
                     message: str | None = None,
                     poll_seconds: int = 40,
@@ -333,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
                         "samsung_find_ring",
                         {
                             "query": query,
+                            "confirm": confirm,
                             "status": status,
                             "message": message,
                             "poll_seconds": poll_seconds,
@@ -344,12 +390,18 @@ def main(argv: list[str] | None = None) -> int:
                 @mcp_app.tool(name=tool_name, description=desc)
                 def handle_track(
                     query: str,
+                    confirm: bool,
                     enabled: bool = True,
                     poll_seconds: int = 30,
                 ) -> dict[str, Any]:
                     return server.call_tool(
                         "samsung_find_set_tracking",
-                        {"query": query, "enabled": enabled, "poll_seconds": poll_seconds},
+                        {
+                            "query": query,
+                            "confirm": confirm,
+                            "enabled": enabled,
+                            "poll_seconds": poll_seconds,
+                        },
                     )
 
         anyio.run(mcp_app.run_stdio_async)
