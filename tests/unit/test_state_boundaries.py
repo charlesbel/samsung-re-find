@@ -509,9 +509,10 @@ def test_migration_force_overwrite_and_injected_second_write_failure_rollback(tm
 
     # Verify that BOTH master and derived files were restored to exact preexisting contents
     assert master_file.read_text(encoding="utf-8") == original_master_content
-    assert stat.S_IMODE(master_file.stat().st_mode) == 0o600
     assert derived_file.read_text(encoding="utf-8") == original_derived_content
-    assert stat.S_IMODE(derived_file.stat().st_mode) == 0o600
+    if sys.platform != "win32":
+        assert stat.S_IMODE(master_file.stat().st_mode) == 0o600
+        assert stat.S_IMODE(derived_file.stat().st_mode) == 0o600
 
 
 def test_auth_state_legacy_fallback_never_exposes_master_fields(tmp_path):
