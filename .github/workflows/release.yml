@@ -52,7 +52,7 @@ jobs:
           }
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip uv
           python -m pip install -e '.[dev,mcp]'
       - name: Code quality and lint
         run: |
@@ -63,7 +63,9 @@ jobs:
           python -m pytest
           python -O -m pytest
       - name: Audit dependency security
-        run: pip-audit --strict
+        run: |
+          uv export --frozen --no-dev --extra mcp --no-emit-project --output-file /tmp/audit-requirements.txt
+          pip-audit --strict --requirement /tmp/audit-requirements.txt
       - name: Scan full Git history for secrets
         run: |
           go install github.com/zricethezav/gitleaks/v8@v8.28.0
