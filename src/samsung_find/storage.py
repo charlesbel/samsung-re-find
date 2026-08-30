@@ -137,7 +137,7 @@ def locked(path: str | Path) -> Iterator[None]:
             if fcntl is not None:
                 fcntl.flock(fd, fcntl.LOCK_EX)
             elif msvcrt is not None:
-                msvcrt.locking(fd, msvcrt.LOCK_EX)
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
 
             path_lock.fd = fd
 

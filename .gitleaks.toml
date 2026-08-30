@@ -16,5 +16,6 @@ regexes = [
 ]
 paths = [
   '''(?:^|/)src/samsung_find/constants\.py$''',
+  '''(?:^|/)samsung_find/constants\.py$''',
   '''(?:^|/)tests/unit/test_public_api\.py$''',
 ]

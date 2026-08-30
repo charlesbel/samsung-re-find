@@ -1,8 +1,12 @@
 import os
+import sys
+
+import pytest
 
 from samsung_find.storage import atomic_write_json, read_json, secure_read_text
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes do not model Windows ACLs")
 def test_atomic_state_is_private(tmp_path):
     path = tmp_path / "state.json"
     atomic_write_json(path, {"private_fixture": "value"})

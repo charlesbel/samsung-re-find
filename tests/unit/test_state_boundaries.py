@@ -24,6 +24,7 @@ from samsung_find.storage import secure_read_raw_text
 
 def test_path_resolvers_platformdirs_linux(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.delenv("XDG_STATE_HOME", raising=False)
     monkeypatch.delenv("SAMSUNG_ACCOUNT_MASTER_STATE", raising=False)

@@ -1,4 +1,7 @@
 import stat
+import sys
+
+import pytest
 
 from samsung_find.capture_redirect import main
 from samsung_find.constants import REDIRECT_URI
@@ -33,6 +36,7 @@ def test_capture_redirect_requires_exact_configured_callback_target(tmp_path, mo
     assert secure_read_raw_text(target) == expected
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes do not model Windows ACLs")
 def test_capture_redirect_writes_uri_atomically_with_secure_permissions(tmp_path, monkeypatch):
     target = tmp_path / "redirect_dir" / "redirect.uri"
     monkeypatch.setenv("SAMSUNG_FIND_REDIRECT_PATH", str(target))

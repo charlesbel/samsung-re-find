@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from samsung_find import storage
 from samsung_find.credentials import resolve_master_state_path
 from samsung_find.exceptions import SecurityError
 from samsung_find.storage import (
@@ -27,6 +28,28 @@ def _worker_increment(file_path: str, iterations: int):
                 data = {}
             count = data.get("count", 0) + 1
             atomic_write_json(target, {"count": count})
+
+
+def test_windows_lock_backend_uses_msvcrt_locking_contract(tmp_path, monkeypatch):
+    class FakeMsvcrt:
+        LK_LOCK = 1
+        LK_UNLCK = 2
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+
+        def locking(self, fd: int, mode: int, length: int) -> None:
+            assert fd >= 0
+            self.calls.append((mode, length))
+
+    fake = FakeMsvcrt()
+    monkeypatch.setattr(storage, "fcntl", None)
+    monkeypatch.setattr(storage, "msvcrt", fake)
+
+    with locked(tmp_path / "windows-state.json"):
+        pass
+
+    assert fake.calls == [(fake.LK_LOCK, 1), (fake.LK_UNLCK, 1)]
 
 
 def test_thread_contention_locking(tmp_path):

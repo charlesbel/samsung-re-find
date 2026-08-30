@@ -1,5 +1,6 @@
 import importlib.resources
 import json
+import tomllib
 from pathlib import Path
 
 import jsonschema
@@ -60,3 +61,8 @@ def test_package_entry_points_include_canonical_and_compatibility_aliases():
 
     assert "samsung-find-mcp" in entry_points
     assert entry_points["samsung-find-mcp"] == "samsung_find.mcp_server:main"
+
+
+def test_windows_runtime_has_iana_timezone_database():
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert 'tzdata>=2025.2; sys_platform == "win32"' in project["dependencies"]
