@@ -102,7 +102,7 @@ class SmartThingsTransport:
         self._token_getter = token_getter
         self.language = language
         self.country = country
-        self.http = http_client or httpx.Client(timeout=timeout, follow_redirects=True)
+        self.http = http_client or httpx.Client(timeout=timeout, follow_redirects=False)
 
     def close(self) -> None:
         self.http.close()
@@ -124,6 +124,36 @@ class SmartThingsTransport:
             "User-Agent": SMARTTHINGS_USER_AGENT,
         }
 
+    def _send_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        max_redirects: int = 5,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        current_url = validate_smartthings_url(url)
+        for _ in range(max_redirects):
+            try:
+                response = self.http.request(method, current_url, headers=headers, **kwargs)
+            except httpx.HTTPError as exc:
+                raise NetworkError(f"SmartThings request failed: {exc}") from exc
+
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = response.headers.get("Location")
+                if not location:
+                    return response
+                current_url = validate_smartthings_url(location, base_url=current_url)
+                if response.status_code in (301, 302, 303) and method.upper() != "GET":
+                    method = "GET"
+                    kwargs.pop("json", None)
+                    kwargs.pop("data", None)
+                continue
+
+            return response
+        raise NetworkError("Too many redirects")
+
     def get(
         self,
         url: str,
@@ -132,19 +162,12 @@ class SmartThingsTransport:
         retry_auth: bool = True,
     ) -> httpx.Response:
         """Send an authenticated GET request with automatic retry on 401 (idempotent read)."""
-        valid_url = validate_smartthings_url(url)
         headers = self._headers()
-        try:
-            response = self.http.get(valid_url, headers=headers, params=params)
-        except httpx.HTTPError as exc:
-            raise NetworkError(f"SmartThings request failed: {exc}") from exc
+        response = self._send_request("GET", url, headers=headers, params=params)
 
         if response.status_code in (401, 403) and retry_auth:
             headers = self._headers(force_refresh=True)
-            try:
-                response = self.http.get(valid_url, headers=headers, params=params)
-            except httpx.HTTPError as exc:
-                raise NetworkError(f"SmartThings retry failed: {exc}") from exc
+            response = self._send_request("GET", url, headers=headers, params=params)
 
         return response
 
@@ -160,21 +183,13 @@ class SmartThingsTransport:
         Non-idempotent actions are NOT automatically retried after 401/403 to prevent
         unintended duplicate state changes or side effects.
         """
-        valid_url = validate_smartthings_url(url)
         headers = self._headers()
-
-        try:
-            response = self.http.post(valid_url, headers=headers, json=payload)
-        except httpx.HTTPError as exc:
-            raise NetworkError(f"Action execution failed: {exc}") from exc
+        response = self._send_request("POST", url, headers=headers, json=payload)
 
         if response.status_code in (401, 403):
             if idempotent:
                 headers = self._headers(force_refresh=True)
-                try:
-                    response = self.http.post(valid_url, headers=headers, json=payload)
-                except httpx.HTTPError as exc:
-                    raise NetworkError(f"Idempotent action retry failed: {exc}") from exc
+                response = self._send_request("POST", url, headers=headers, json=payload)
             else:
                 raise AuthError(
                     f"Authentication failure during action execution (HTTP {response.status_code}); "

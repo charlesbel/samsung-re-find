@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import base64
 import html
-import json
 import math
 import time
 import uuid
@@ -160,72 +158,6 @@ class SamsungFindClient:
             raise SamsungAuthError("Samsung Find installed app was not found in SmartThings")
         self._installed_app_id = str(selected["installedAppId"])
         return self._installed_app_id
-
-    @staticmethod
-    def _b64(value: Any) -> str:
-        if value is None:
-            return ""
-        raw = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
-        return base64.b64encode(raw.encode()).decode()
-
-    def _execute(
-        self,
-        method: str,
-        uri: str,
-        *,
-        extra_uri: str | None = None,
-        extra_params: dict[str, Any] | None = None,
-        body: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        from .transport import _PROTECTED_FIELDS
-
-        state = self.auth.state()
-        token = self.auth.access_token(IOT)
-        now = datetime.now(self.timezone)
-        offset = now.strftime("%z")
-        timezone_offset = f"UTC{offset[:3]}:{offset[3:]}"
-        parameters: dict[str, Any] = {
-            "requester": state["user_id"],
-            "requesterToken": token,
-            "clientType": "aPlugin",
-            "clientVersion": "1",
-            "method": method,
-            "uri": uri,
-            "extraUri": extra_uri,
-            "encodedHeaders": "",
-            "encodedBody": self._b64(body),
-        }
-        if extra_params:
-            for key in extra_params:
-                if key in _PROTECTED_FIELDS:
-                    raise SamsungAuthError(f"Protected parameter {key!r} cannot be overridden")
-            parameters.update(extra_params)
-        payload = {
-            "client": {
-                "displayMode": "LIGHT",
-                "language": f"{self.language}-{self.country}",
-                "mobileDeviceId": state["device_id"],
-                "os": "Android",
-                "samsungAccountId": state["user_id"],
-                "supportedTemplates": [f"BASIC_V{i}" for i in range(1, 8)],
-                "timeZoneOffset": timezone_offset,
-                "version": SMARTTHINGS_APP_VERSION,
-            },
-            "parameters": parameters,
-        }
-        app_id = self._ensure_installed_app()
-        response = self._request(
-            "POST",
-            f"https://api.smartthings.com/installedapps/{app_id}/execute",
-            json=payload,
-        ).json()
-        status_code = response.get("statusCode")
-        if status_code != 200:
-            raise SamsungAuthError(f"Samsung Find installed app failed ({status_code}/{response.get('errorCode')})")
-        message = response.get("message")
-        if not isinstance(message, dict):
-            raise SamsungAuthError("Samsung Find installed app returned no message object")
-        return message
 
     def _web_session(self) -> tuple[httpx.Client, str]:
         def create(force: bool) -> tuple[httpx.Client, str | None]:

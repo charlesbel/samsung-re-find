@@ -402,29 +402,5 @@ def test_private_operation_helper_rejects_ring_parameters_for_other_operations()
         )
 
 
-def test_plugin_request_uses_configured_timezone_offset():
-    class Auth:
-        @staticmethod
-        def state():
-            return {"user_id": "synthetic-user", "device_id": "synthetic-device"}
-
-        @staticmethod
-        def access_token(_kind):
-            return "synthetic-token"
-
-    client = SamsungFindClient.__new__(SamsungFindClient)
-    client.auth = Auth()
-    client.country = "US"
-    client.language = "en"
-    client.timezone = ZoneInfo("Asia/Kolkata")
-    client._ensure_installed_app = lambda: "synthetic-app"
-    captured = {}
-
-    def request(_method, _url, **kwargs):
-        captured.update(kwargs)
-        return FakeResponse(payload={"statusCode": 200, "message": {"ok": True}})
-
-    client._request = request
-
-    assert client._execute("GET", "/devices") == {"ok": True}
-    assert captured["json"]["client"]["timeZoneOffset"] == "UTC+05:30"
+def test_generic_installed_app_execute_is_removed():
+    assert not hasattr(SamsungFindClient, "_execute")
