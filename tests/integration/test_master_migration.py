@@ -9,6 +9,7 @@ from samsung_find.exceptions import AuthError
 def test_migrate_legacy_state_preserves_source_and_creates_master(tmp_path):
     legacy_file = tmp_path / "legacy" / "state.json"
     legacy_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_file.parent.chmod(0o700)
     legacy_content = json.dumps(
         {
             "schema": 1,
@@ -52,6 +53,7 @@ def test_migrate_legacy_state_preserves_source_and_creates_master(tmp_path):
 def test_migrate_already_migrated_is_idempotent(tmp_path):
     legacy_file = tmp_path / "legacy" / "state.json"
     legacy_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_file.parent.chmod(0o700)
     legacy_file.write_text(
         json.dumps(
             {
@@ -135,6 +137,7 @@ def test_migrate_adversarial_created_at_normalized_and_reloads(tmp_path, adversa
 
     legacy_file = tmp_path / "legacy" / "state.json"
     legacy_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_file.parent.chmod(0o700)
     legacy_data = {
         "schema": 1,
         "device_id": "synthetic-test-device-id-999",

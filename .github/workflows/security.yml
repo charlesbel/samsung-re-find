@@ -22,15 +22,17 @@ jobs:
           python-version: "3.12"
       - name: Install project and security scanners
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install '.[dev,mcp]'
+          python -m pip install --upgrade pip uv pip-audit
+          python -m pip install -e '.[dev,mcp]'
           go install github.com/zricethezav/gitleaks/v8@v8.28.0
       - name: Scan tracked tree and complete Git history
         run: |
           "$(go env GOPATH)/bin/gitleaks" dir --config .gitleaks.toml --redact --no-banner --exit-code 1 .
           "$(go env GOPATH)/bin/gitleaks" git --config .gitleaks.toml --redact --no-banner --exit-code 1 .
       - name: Audit Python dependency vulnerabilities
-        run: pip-audit --strict
+        run: |
+          uv export --frozen --no-dev --extra mcp --no-emit-project --output-file /tmp/audit-requirements.txt
+          pip-audit --strict --requirement /tmp/audit-requirements.txt
       - name: Build and scan extracted archive contents
         run: |
           rm -rf dist build

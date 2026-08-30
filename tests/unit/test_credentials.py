@@ -5,6 +5,7 @@ import uuid
 
 import pytest
 
+import samsung_find.credentials as credentials_module
 from samsung_find.credentials import (
     MasterAccount,
     MasterIdentity,
@@ -201,6 +202,7 @@ def test_master_state_store_rejects_untrusted_auth_host(tmp_path):
 
 
 def test_master_state_path_resolution(tmp_path, monkeypatch):
+    monkeypatch.setattr(credentials_module.sys, "platform", "linux")
     custom_path = tmp_path / "custom" / "master.json"
 
     # 1. Explicit override
