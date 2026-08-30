@@ -221,47 +221,13 @@ class MasterStateStore:
     def exists(self) -> bool:
         return self.master_path.exists()
 
-    def load(self, *, allow_legacy_fallback: bool = True) -> MasterState | None:
-        if self.master_path.exists():
-            with locked(self.master_path):
-                data = read_json(self.master_path)
-                return MasterState.from_dict(data)
+    def _load_master_locked(self) -> MasterState | None:
+        if not self.master_path.exists():
+            return None
+        data = read_json(self.master_path)
+        return MasterState.from_dict(data)
 
-        if allow_legacy_fallback and self.legacy_path.exists():
-            warnings.warn(
-                "Using legacy authentication state from samsung-find. "
-                "Run 'samsung-find auth migrate-master' to migrate.",
-                UserWarning,
-                stacklevel=2,
-            )
-            with locked(self.legacy_path):
-                data = read_json(self.legacy_path)
-                userauth = data.get("userauth_token")
-                if not userauth:
-                    return None
-                auth_server = validate_auth_server_url(data.get("auth_server_url", "https://auth.samsungosp.com"))
-                return MasterState(
-                    schema=MASTER_SCHEMA_ID,
-                    schema_version=MASTER_SCHEMA_VERSION,
-                    generation=str(uuid.uuid4()),
-                    created_at=float(data.get("created_at", time.time())),
-                    updated_at=float(data.get("created_at", time.time())),
-                    account=MasterAccount(
-                        login_id=str(data.get("login_id", "legacy_user")),
-                        user_id=str(data.get("user_id")) if data.get("user_id") else None,
-                    ),
-                    installation=MasterInstallation(
-                        physical_address=str(data.get("device_id", "legacy_device")),
-                    ),
-                    identity=MasterIdentity(
-                        auth_server_url=auth_server,
-                        userauth_token=str(userauth),
-                    ),
-                )
-
-        return None
-
-    def save(
+    def _save_master_locked(
         self,
         login_id: str,
         physical_address: str,
@@ -273,16 +239,10 @@ class MasterStateStore:
         auth_server = validate_auth_server_url(auth_server_url)
         gen = generation or str(uuid.uuid4())
         now = time.time()
-
-        # If master state already existed, keep created_at
         created_at = now
-        if self.master_path.exists():
-            try:
-                existing = self.load(allow_legacy_fallback=False)
-                if existing:
-                    created_at = existing.created_at
-            except Exception:
-                pass
+        existing = self._load_master_locked()
+        if existing:
+            created_at = existing.created_at
 
         state = MasterState(
             schema=MASTER_SCHEMA_ID,
@@ -297,21 +257,84 @@ class MasterStateStore:
                 userauth_token=userauth_token,
             ),
         )
-
-        with locked(self.master_path):
-            atomic_write_json(self.master_path, state.to_dict())
-
+        atomic_write_json(self.master_path, state.to_dict())
         return state
+
+    def _load_legacy_locked(self) -> MasterState | None:
+        if not self.legacy_path.exists():
+            return None
+        data = read_json(self.legacy_path)
+        userauth = data.get("userauth_token")
+        login_id = data.get("login_id")
+        device_id = data.get("device_id")
+        auth_server_raw = data.get("auth_server_url")
+        if not userauth or not login_id or not device_id or not auth_server_raw:
+            return None
+
+        auth_server = validate_auth_server_url(str(auth_server_raw))
+        return MasterState(
+            schema=MASTER_SCHEMA_ID,
+            schema_version=MASTER_SCHEMA_VERSION,
+            generation=str(uuid.uuid4()),
+            created_at=float(data.get("created_at", time.time())),
+            updated_at=float(data.get("created_at", time.time())),
+            account=MasterAccount(
+                login_id=str(login_id),
+                user_id=str(data.get("user_id")) if data.get("user_id") else None,
+            ),
+            installation=MasterInstallation(
+                physical_address=str(device_id),
+            ),
+            identity=MasterIdentity(
+                auth_server_url=auth_server,
+                userauth_token=str(userauth),
+            ),
+        )
+
+    def load(self, *, allow_legacy_fallback: bool = True) -> MasterState | None:
+        if self.master_path.exists():
+            with locked(self.master_path):
+                return self._load_master_locked()
+
+        if allow_legacy_fallback and self.legacy_path.exists():
+            warnings.warn(
+                "Using legacy authentication state from samsung-find. "
+                "Run 'samsung-find auth migrate-master' to migrate.",
+                UserWarning,
+                stacklevel=2,
+            )
+            with locked(self.legacy_path):
+                return self._load_legacy_locked()
+
+        return None
+
+    def save(
+        self,
+        login_id: str,
+        physical_address: str,
+        auth_server_url: str,
+        userauth_token: str,
+        user_id: str | None = None,
+        generation: str | None = None,
+    ) -> MasterState:
+        with locked(self.master_path):
+            return self._save_master_locked(
+                login_id=login_id,
+                physical_address=physical_address,
+                auth_server_url=auth_server_url,
+                userauth_token=userauth_token,
+                user_id=user_id,
+                generation=generation,
+            )
 
     def migrate_legacy(self, *, force: bool = False) -> dict[str, Any]:
         """Migrate legacy samsung-find state to shared master-state-v1 non-destructively."""
-        # Determine deterministic lock acquisition order
         paths = sorted([self.master_path, self.legacy_path], key=lambda p: str(p.resolve()))
 
         with locked(paths[0]), locked(paths[1]):
             if self.master_path.exists() and not force:
                 try:
-                    existing = self.load(allow_legacy_fallback=False)
+                    existing = self._load_master_locked()
                     if existing and existing.identity.userauth_token:
                         return {
                             "migrated": False,
@@ -331,26 +354,34 @@ class MasterStateStore:
                 raise AuthError(f"Failed to read legacy state: {exc}") from exc
 
             userauth = legacy_data.get("userauth_token")
-            if not userauth:
-                raise AuthError("Legacy state is missing master userauth_token")
+            login_id = legacy_data.get("login_id")
+            device_id = legacy_data.get("device_id")
+            auth_server_raw = legacy_data.get("auth_server_url")
 
-            login_id = str(legacy_data.get("login_id", "legacy_user"))
-            device_id = str(legacy_data.get("device_id", "legacy_device"))
+            if not userauth or not isinstance(userauth, str) or not userauth.strip():
+                raise AuthError("Legacy state is missing required userauth_token")
+            if not login_id or not isinstance(login_id, str) or not login_id.strip():
+                raise AuthError("Legacy state is missing required login_id")
+            if not device_id or not isinstance(device_id, str) or not device_id.strip():
+                raise AuthError("Legacy state is missing required device_id")
+            if not auth_server_raw or not isinstance(auth_server_raw, str):
+                raise AuthError("Legacy state is missing required auth_server_url")
+
+            auth_server = validate_auth_server_url(auth_server_raw)
             user_id = str(legacy_data.get("user_id")) if legacy_data.get("user_id") else None
-            auth_server = validate_auth_server_url(legacy_data.get("auth_server_url", "https://auth.samsungosp.com"))
 
-            # Save new master state
-            self.save(
-                login_id=login_id,
+            # Save new master state using lock-held internal helper
+            self._save_master_locked(
+                login_id=login_id.strip(),
                 user_id=user_id,
-                physical_address=device_id,
+                physical_address=device_id.strip(),
                 auth_server_url=auth_server,
-                userauth_token=str(userauth),
+                userauth_token=userauth.strip(),
             )
 
             # Validate the newly created master state
-            verified = self.load(allow_legacy_fallback=False)
-            if not verified or verified.identity.userauth_token != str(userauth):
+            verified = self._load_master_locked()
+            if not verified or verified.identity.userauth_token != userauth.strip():
                 raise AuthError("Master state verification failed after migration")
 
             return {

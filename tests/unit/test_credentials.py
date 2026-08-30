@@ -23,20 +23,23 @@ def test_master_state_repr_redaction():
         generation=str(uuid.uuid4()),
         created_at=1700000000.0,
         updated_at=1700000000.0,
-        account=MasterAccount(login_id="user@example.com", user_id="user_12345"),
-        installation=MasterInstallation(physical_address="AA:BB:CC:DD:EE:FF"),
+        account=MasterAccount(
+            login_id="synthetic-test-user@example.invalid",
+            user_id="synthetic-test-user-12345",
+        ),
+        installation=MasterInstallation(physical_address="synthetic-test-address-01"),
         identity=MasterIdentity(
-            auth_server_url="https://auth.samsungosp.com",
-            userauth_token="SUPER_SECRET_USERAUTH_TOKEN_VALUE",
+            auth_server_url="https://synthetic-test.samsungosp.com",
+            userauth_token="synthetic-test-userauth-token-not-real",
         ),
     )
     repr_str = repr(state)
     str_str = str(state)
     for text in (repr_str, str_str):
-        assert "SUPER_SECRET_USERAUTH_TOKEN_VALUE" not in text
-        assert "user@example.com" not in text
-        assert "user_12345" not in text
-        assert "AA:BB:CC:DD:EE:FF" not in text
+        assert "synthetic-test-userauth-token-not-real" not in text
+        assert "synthetic-test-user@example.invalid" not in text
+        assert "synthetic-test-user-12345" not in text
+        assert "synthetic-test-address-01" not in text
         assert "[REDACTED]" in text or "***" in text
 
 
@@ -45,21 +48,20 @@ def test_master_state_store_save_and_load(tmp_path):
     store = MasterStateStore(master_file)
 
     saved = store.save(
-        login_id="alice@example.com",
-        user_id="alice_uid",
-        physical_address="11:22:33:44:55:66",
+        login_id="synthetic-test-user@example.invalid",
+        user_id="synthetic-test-uid",
+        physical_address="synthetic-test-device-id",
         auth_server_url="https://auth.samsungosp.com",
-        userauth_token="secret_token_123",
+        userauth_token="synthetic-test-token-not-real-001",
     )
 
     assert saved.schema == "io.github.charlesbel.samsung-account.master"
     assert saved.schema_version == 1
-    assert saved.account.login_id == "alice@example.com"
-    assert saved.identity.userauth_token == "secret_token_123"
+    assert saved.account.login_id == "synthetic-test-user@example.invalid"
+    assert saved.identity.userauth_token == "synthetic-test-token-not-real-001"
     assert master_file.exists()
 
-    # Permissions on POSIX
-    if hasattr(os, "chmod"):
+    if hasattr(os, "chmod") and os.name != "nt":
         mode = stat.S_IMODE(master_file.stat().st_mode)
         assert mode == 0o600
         parent_mode = stat.S_IMODE(master_file.parent.stat().st_mode)
@@ -74,23 +76,23 @@ def test_master_state_generation_rotation(tmp_path):
     store = MasterStateStore(master_file)
 
     first = store.save(
-        login_id="alice@example.com",
-        user_id="alice_uid",
-        physical_address="11:22:33:44:55:66",
+        login_id="synthetic-test-user@example.invalid",
+        user_id="synthetic-test-uid",
+        physical_address="synthetic-test-device-id",
         auth_server_url="https://auth.samsungosp.com",
-        userauth_token="secret_token_1",
+        userauth_token="synthetic-test-token-1",
     )
 
     second = store.save(
-        login_id="alice@example.com",
-        user_id="alice_uid",
-        physical_address="11:22:33:44:55:66",
+        login_id="synthetic-test-user@example.invalid",
+        user_id="synthetic-test-uid",
+        physical_address="synthetic-test-device-id",
         auth_server_url="https://auth.samsungosp.com",
-        userauth_token="secret_token_2",
+        userauth_token="synthetic-test-token-2",
     )
 
     assert first.generation != second.generation
-    assert second.identity.userauth_token == "secret_token_2"
+    assert second.identity.userauth_token == "synthetic-test-token-2"
 
 
 def test_master_state_store_rejects_symlink(tmp_path):
@@ -110,11 +112,11 @@ def test_master_state_store_rejects_untrusted_auth_host(tmp_path):
 
     with pytest.raises(SecurityError):
         store.save(
-            login_id="alice@example.com",
-            user_id="alice_uid",
-            physical_address="11:22:33:44:55:66",
+            login_id="synthetic-test-user@example.invalid",
+            user_id="synthetic-test-uid",
+            physical_address="synthetic-test-device-id",
             auth_server_url="https://attacker-controlled.com",
-            userauth_token="secret_token",
+            userauth_token="synthetic-test-token",
         )
 
 
@@ -144,11 +146,11 @@ def test_legacy_fallback_loading(tmp_path):
         json.dumps(
             {
                 "schema": 1,
-                "device_id": "legacy_device_id_123",
+                "device_id": "synthetic-test-device-id-123",
                 "auth_server_url": "https://auth.samsungosp.com",
-                "login_id": "legacy_user@example.com",
-                "user_id": "legacy_uid_456",
-                "userauth_token": "legacy_master_token_789",
+                "login_id": "synthetic-test-user@example.invalid",
+                "user_id": "synthetic-test-uid-456",
+                "userauth_token": "synthetic-test-master-token-789",
                 "find": {"access_token": "at", "refresh_token": "rt"},
                 "iot": {"access_token": "iat", "refresh_token": "irt"},
             }
@@ -163,6 +165,6 @@ def test_legacy_fallback_loading(tmp_path):
     )
     loaded = store.load(allow_legacy_fallback=True)
     assert loaded is not None
-    assert loaded.account.login_id == "legacy_user@example.com"
-    assert loaded.identity.userauth_token == "legacy_master_token_789"
-    assert loaded.installation.physical_address == "legacy_device_id_123"
+    assert loaded.account.login_id == "synthetic-test-user@example.invalid"
+    assert loaded.identity.userauth_token == "synthetic-test-master-token-789"
+    assert loaded.installation.physical_address == "synthetic-test-device-id-123"
