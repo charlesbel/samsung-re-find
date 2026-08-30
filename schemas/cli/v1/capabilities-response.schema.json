@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CapabilitiesResponseV1",
+  "type": "object",
+  "required": ["can_ring", "can_track", "can_locate", "can_check_connection"],
+  "properties": {
+    "can_ring": { "type": "boolean" },
+    "can_track": { "type": "boolean" },
+    "can_locate": { "type": "boolean" },
+    "can_check_connection": { "type": "boolean" },
+    "offline_finding": { "type": "boolean" },
+    "features": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

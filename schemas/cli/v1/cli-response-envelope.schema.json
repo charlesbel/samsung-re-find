@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/charlesbel/samsung-find/main/schemas/cli/v1/cli-response-envelope.schema.json",
+  "title": "CliResponseEnvelopeV1",
+  "description": "Standardized JSON response envelope for Samsung CLI tools (v1)",
+  "type": "object",
+  "required": ["ok", "schema_version"],
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "data": {},
+    "meta": {
+      "type": "object"
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": ["ok", "schema_version", "data"],
+      "properties": {
+        "ok": { "const": true }
+      }
+    },
+    {
+      "required": ["ok", "schema_version", "error"],
+      "properties": {
+        "ok": { "const": false }
+      }
+    }
+  ]
+}

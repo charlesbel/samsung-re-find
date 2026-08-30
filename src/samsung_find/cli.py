@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import subprocess  # nosec B404
@@ -11,18 +10,32 @@ from pathlib import Path
 import httpx
 
 from .api import SamsungFindClient
-from .auth import SamsungAuth, SamsungAuthError
+from .auth import SamsungAuth
 from .constants import DEFAULT_PENDING_PATH, DEFAULT_REDIRECT_PATH, DEFAULT_STATE_PATH
 from .credentials import MasterStateStore
+from .exceptions import (
+    AuthError,
+    DeviceNotFoundError,
+    NetworkError,
+    OperationError,
+    RateLimitError,
+    SecurityError,
+    StorageError,
+)
+from .serialization import serialize_error, serialize_response, to_json
 from .storage import secure_read_text
 
 
-def emit(value: object) -> None:
-    print(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+def emit(value: object, *, legacy_json: bool = False) -> None:
+    if legacy_json:
+        print(to_json(value))
+    else:
+        print(to_json(serialize_response(value)))
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="samsung-find")
+    root = argparse.ArgumentParser(prog="samsung-find", description="Samsung Find CLI and tools")
+    root.add_argument("--legacy-json", action="store_true", help="Output raw legacy JSON without v1 envelope")
     root.add_argument("--master-state", default=None, help="Path to shared Samsung master state v1")
     root.add_argument("--state", default=DEFAULT_STATE_PATH)
     root.add_argument("--pending", default=DEFAULT_PENDING_PATH)
@@ -39,9 +52,9 @@ def parser() -> argparse.ArgumentParser:
     migrate = commands.add_parser("migrate-master", help="Migrate legacy state to neutral master state v1")
     migrate.add_argument("--from-state", default=None, help="Legacy state path")
     migrate.add_argument("--force", action="store_true", help="Force overwrite existing master state")
-    commands.add_parser("status")
-    commands.add_parser("verify")
-    devices = commands.add_parser("devices")
+    commands.add_parser("status", help="Check local authentication status")
+    commands.add_parser("verify", help="Verify connection and SmartThings Find session")
+    devices = commands.add_parser("devices", help="List registered Samsung Find devices")
     devices.add_argument("--include-ids", action="store_true", help="Include internal device identifiers")
     capabilities = commands.add_parser("capabilities", help="Show safe features exposed for one device")
     capabilities.add_argument("query")
@@ -59,7 +72,7 @@ def parser() -> argparse.ArgumentParser:
     track.add_argument("action", choices=("start", "stop"))
     track.add_argument("--poll-seconds", type=int, default=30)
     track.add_argument("--yes", action="store_true", required=True, help="Confirm the tracking state change")
-    locate = commands.add_parser("locate")
+    locate = commands.add_parser("locate", help="Get device location")
     locate.add_argument("query", help="Unique name, model substring or device id")
     locate.add_argument("--passive", action="store_true", help="Do not request a fresh device fix")
     locate.add_argument("--poll-seconds", type=int, default=180)
@@ -99,26 +112,32 @@ def install_handler(redirect_path: str) -> dict[str, object]:
     return {"installed": True, "handler": str(desktop), "redirect_file": env_path}
 
 
-def main() -> int:
-    args = parser().parse_args()
+def main(argv: list[str] | None = None) -> int:
+    try:
+        args = parser().parse_args(argv)
+    except SystemExit as exc:
+        return 2 if exc.code != 0 else 0
+
     auth = SamsungAuth(args.state, args.pending, master_path=args.master_state)
     client: SamsungFindClient | None = None
+    legacy = getattr(args, "legacy_json", False)
+
     try:
         if args.command == "install-handler":
-            emit(install_handler(args.redirect_file))
+            emit(install_handler(args.redirect_file), legacy_json=legacy)
         elif args.command == "auth-start":
-            emit({"login_url": auth.start(args.country, args.locale)})
+            emit({"login_url": auth.start(args.country, args.locale)}, legacy_json=legacy)
         elif args.command == "auth-complete":
             redirect = secure_read_text(args.redirect_file)
-            emit(auth.complete(redirect))
+            emit(auth.complete(redirect), legacy_json=legacy)
         elif args.command == "migrate-master":
             store = MasterStateStore(
                 master_path=args.master_state,
                 legacy_path=args.from_state or args.state,
             )
-            emit(store.migrate_legacy(force=args.force))
+            emit(store.migrate_legacy(force=args.force), legacy_json=legacy)
         elif args.command == "status":
-            emit(auth.public_status())
+            emit(auth.public_status(), legacy_json=legacy)
         else:
             client = SamsungFindClient(
                 auth,
@@ -131,31 +150,64 @@ def main() -> int:
                 emit({
                     "persistent_master_token_present": auth.public_status()["authenticated"],
                     "web_session_valid": auth._validate_web_cookie(cookie),
-                })
+                }, legacy_json=legacy)
             elif args.command == "devices":
                 keys = (
                     ("id", "name", "model", "location_type")
                     if args.include_ids
                     else ("name", "model", "location_type")
                 )
-                emit([{key: d.get(key) for key in keys} for d in client.devices()])
+                emit([{key: d.get(key) for key in keys} for d in client.devices()], legacy_json=legacy)
             elif args.command == "capabilities":
-                emit(client.capabilities(args.query))
+                emit(client.capabilities(args.query), legacy_json=legacy)
             elif args.command == "check":
-                emit(client.check_connection(args.query, poll_seconds=args.poll_seconds))
+                emit(client.check_connection(args.query, poll_seconds=args.poll_seconds), legacy_json=legacy)
             elif args.command == "ring":
                 emit(client.ring(
                     args.query, status=args.status, message=args.message, poll_seconds=args.poll_seconds
-                ))
+                ), legacy_json=legacy)
             elif args.command == "track":
                 emit(client.track(
                     args.query, enabled=args.action == "start", poll_seconds=args.poll_seconds
-                ))
+                ), legacy_json=legacy)
             elif args.command == "locate":
-                emit(client.locate(args.query, active=not args.passive, poll_seconds=args.poll_seconds))
+                emit(
+                    client.locate(args.query, active=not args.passive, poll_seconds=args.poll_seconds),
+                    legacy_json=legacy,
+                )
         return 0
-    except (SamsungAuthError, FileNotFoundError, ValueError, httpx.HTTPError) as exc:  # type: ignore[name-defined]
-        print(f"error: {exc}", file=sys.stderr)
+
+    except AuthError as exc:
+        err = serialize_error(code=exc.code, message=str(exc))
+        if not legacy:
+            print(to_json(err))
+        print(f"Authentication error: {exc}", file=sys.stderr)
+        return 3
+    except (NetworkError, httpx.HTTPError) as exc:
+        code = getattr(exc, "code", "network_error")
+        err = serialize_error(code=code, message=str(exc))
+        if not legacy:
+            print(to_json(err))
+        print(f"Network error: {exc}", file=sys.stderr)
+        return 4
+    except (SecurityError, StorageError, PermissionError, FileNotFoundError) as exc:
+        code = getattr(exc, "code", "storage_error")
+        err = serialize_error(code=code, message=str(exc))
+        if not legacy:
+            print(to_json(err))
+        print(f"Storage or security error: {exc}", file=sys.stderr)
+        return 5
+    except (DeviceNotFoundError, OperationError, RateLimitError) as exc:
+        err = serialize_error(code=exc.code, message=str(exc))
+        if not legacy:
+            print(to_json(err))
+        print(f"Operation error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        err = serialize_error(code="unknown_error", message=str(exc))
+        if not legacy:
+            print(to_json(err))
+        print(f"Unexpected error: {exc}", file=sys.stderr)
         return 1
     finally:
         if client:

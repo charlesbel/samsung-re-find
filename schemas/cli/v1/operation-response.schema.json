@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OperationResponseV1",
+  "type": "object",
+  "required": ["operation", "success"],
+  "properties": {
+    "operation": { "type": "string" },
+    "success": { "type": "boolean" },
+    "request_id": { "type": ["string", "null"] },
+    "status_code": { "type": ["string", "null"] },
+    "message": { "type": ["string", "null"] },
+    "battery": { "type": ["string", "null"] },
+    "details": { "type": "object" }
+  }
+}
