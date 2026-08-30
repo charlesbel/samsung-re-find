@@ -298,8 +298,7 @@ class MasterStateStore:
 
         if allow_legacy_fallback and self.legacy_path.exists():
             warnings.warn(
-                "Using legacy authentication state from samsung-find. "
-                "Run 'samsung-find auth migrate-master' to migrate.",
+                "Using legacy authentication state from samsung-find. Run 'samsung-find migrate-master' to migrate.",
                 UserWarning,
                 stacklevel=2,
             )

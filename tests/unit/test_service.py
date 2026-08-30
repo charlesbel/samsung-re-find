@@ -54,6 +54,21 @@ def test_find_service_capabilities_real_transport_shape():
     assert caps.battery_status is True
 
 
+def test_find_service_capabilities_missing_flags_fail_closed():
+    mock_client = MagicMock()
+    mock_client.capabilities.return_value = {"device": {"name": "Unknown"}}
+
+    caps = FindService(mock_client).get_capabilities("Unknown")
+
+    assert caps.can_ring is False
+    assert caps.can_track is False
+    assert caps.can_locate is False
+    assert caps.can_check_connection is False
+    assert caps.passive_location is False
+    assert caps.active_location is False
+    assert caps.battery_status is False
+
+
 def test_find_service_location_real_transport_shape():
     mock_client = MagicMock()
     # Real transport shape from api.py locate()

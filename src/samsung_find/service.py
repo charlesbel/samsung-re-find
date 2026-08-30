@@ -64,8 +64,8 @@ class FindService:
 
     def get_capabilities(self, query: str) -> DeviceCapabilities:
         raw_cap = self.client.capabilities(query)
-        passive_loc = bool(raw_cap.get("passive_location", True))
-        active_loc = bool(raw_cap.get("active_location", True))
+        passive_loc = bool(raw_cap.get("passive_location", False))
+        active_loc = bool(raw_cap.get("active_location", False))
         return DeviceCapabilities(
             can_ring=bool(raw_cap.get("ring", False)),
             can_track=bool(raw_cap.get("continuous_tracking", False)),

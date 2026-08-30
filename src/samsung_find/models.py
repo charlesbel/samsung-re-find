@@ -40,10 +40,10 @@ class DeviceCapabilities:
 
     can_ring: bool = False
     can_track: bool = False
-    can_locate: bool = True
+    can_locate: bool = False
     can_check_connection: bool = False
-    passive_location: bool = True
-    active_location: bool = True
+    passive_location: bool = False
+    active_location: bool = False
     battery_status: bool = False
 
     def to_dict(self) -> dict[str, Any]:
