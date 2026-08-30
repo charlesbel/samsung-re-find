@@ -7,21 +7,48 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
-  build-and-release:
+  verify-and-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
         with:
           python-version: "3.12"
-      - run: python -m pip install --upgrade pip build twine
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev,mcp]'
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: python -m pytest
+      - run: python -m pip install build twine
       - run: python -m build
       - run: twine check --strict dist/*
+      - name: Verify package archives
+        run: |
+          python -c "
+          import tarfile, zipfile, glob, sys
+          sdists = glob.glob('dist/*.tar.gz')
+          wheels = glob.glob('dist/*.whl')
+          assert len(sdists) == 1, 'Expected exactly 1 sdist'
+          assert len(wheels) == 1, 'Expected exactly 1 wheel'
+
+          with tarfile.open(sdists[0], 'r:gz') as tar:
+              names = tar.getnames()
+              assert any('LICENSE' in n for n in names), 'LICENSE missing in sdist'
+              assert any('py.typed' in n for n in names), 'py.typed missing in sdist'
+              assert any('.skills' in n for n in names), '.skills missing in sdist'
+              assert not any('.env' in n for n in names), 'Secrets found in sdist'
+
+          with zipfile.ZipFile(wheels[0], 'r') as whl:
+              w_names = whl.namelist()
+              assert any('py.typed' in n for n in w_names), 'py.typed missing in wheel'
+              assert not any('.env' in n for n in w_names), 'Secrets found in wheel'
+          print('Release archive verification passed.')
+          "
       - name: GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191  # v2.0.8
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: dist/*
