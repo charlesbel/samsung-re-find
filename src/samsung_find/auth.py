@@ -19,7 +19,13 @@ from .constants import (
     REDIRECT_URI,
     WEB_FIND_CLIENT_ID,
 )
-from .credentials import MasterStateStore, validate_auth_server_url
+from .credentials import (
+    MasterStateStore,
+    resolve_find_state_path,
+    resolve_legacy_find_state_path,
+    resolve_pending_path,
+    validate_auth_server_url,
+)
 from .crypto import code_challenge, decrypt_auth_value, encrypt_svc_param, random_urlsafe
 from .exceptions import AuthError, SecurityError
 from .storage import atomic_write_json, locked, read_json
@@ -42,15 +48,21 @@ IOT = TokenKind("iot", IOT_CLIENT_ID, IOT_SCOPE)
 class SamsungAuth:
     def __init__(
         self,
-        state_path: str,
-        pending_path: str,
+        state_path: str | Path | None = None,
+        pending_path: str | Path | None = None,
         *,
         master_path: str | Path | None = None,
+        legacy_state_path: str | Path | None = None,
         timeout: float = 30.0,
     ):
-        self.state_path = state_path
-        self.pending_path = pending_path
-        self.master_store = MasterStateStore(master_path=master_path, legacy_path=state_path)
+        self.state_path = resolve_find_state_path(state_path)
+        self.legacy_state_path = resolve_legacy_find_state_path(legacy_state_path)
+        self.pending_path = resolve_pending_path(pending_path)
+        self.master_store = MasterStateStore(
+            master_path=master_path,
+            canonical_state_path=self.state_path,
+            legacy_path=self.legacy_state_path,
+        )
         self.http = httpx.Client(timeout=timeout, follow_redirects=True)
 
     def close(self) -> None:
@@ -67,11 +79,11 @@ class SamsungAuth:
         self._raise(response, "entry point")
         entry = response.json()
         device_id = secrets.token_hex(16)
-        try:
-            current = read_json(self.state_path, required=False)
-            device_id = current.get("device_id") or device_id
-        except (ValueError, OSError):
-            pass
+
+        # Transiently obtain device_id from master or legacy without copying to derived state
+        master = self.master_store.load(allow_legacy_fallback=True)
+        if master and master.installation.physical_address:
+            device_id = master.installation.physical_address
 
         state = random_urlsafe(15)[:20]
         verifier = random_urlsafe(32)[:43]
@@ -168,38 +180,59 @@ class SamsungAuth:
             userauth_token=userauth_token,
         )
 
-        state: dict[str, Any] = {
+        find_tok = self._issue_token(
+            FIND,
+            userauth_token=userauth_token,
+            auth_server_url=auth_server,
+            device_id=pending["device_id"],
+            login_id=login_id,
+        )
+        iot_tok = self._issue_token(
+            IOT,
+            userauth_token=userauth_token,
+            auth_server_url=auth_server,
+            device_id=pending["device_id"],
+            login_id=login_id,
+        )
+
+        # Write clean derived state ONLY (no master fields!)
+        derived_state: dict[str, Any] = {
             "schema": 1,
             "master_generation": master_state.generation,
-            "device_id": pending["device_id"],
-            "auth_server_url": auth_server,
-            "login_id": login_id,
-            "user_id": user_id,
-            "userauth_token": userauth_token,
             "created_at": int(time.time()),
+            "updated_at": int(time.time()),
+            "find": find_tok,
+            "iot": iot_tok,
         }
-        state["find"] = self._issue_token(state, FIND)
-        state["iot"] = self._issue_token(state, IOT)
         with locked(self.state_path):
-            atomic_write_json(self.state_path, state)
+            atomic_write_json(self.state_path, derived_state)
         Path(self.pending_path).expanduser().unlink(missing_ok=True)
-        return self.public_status(state)
+        return self.public_status()
 
-    def public_status(self, state: dict[str, Any] | None = None) -> dict[str, Any]:
-        state = state or self._load_state_safe()
+    def public_status(self) -> dict[str, Any]:
         master = self.master_store.load(allow_legacy_fallback=True)
-        has_master = bool(master and master.identity.userauth_token) or bool(state.get("userauth_token"))
+        derived = self._load_state_safe()
+        if not derived and not self.state_path.exists() and self.legacy_state_path.exists():
+            derived = self._load_legacy_safe()
+
+        has_master = bool(master and master.identity.userauth_token)
         return {
             "authenticated": has_master,
-            "user_id_present": bool((master and master.account.user_id) or state.get("user_id")),
-            "device_id_present": bool((master and master.installation.physical_address) or state.get("device_id")),
-            "find_token_present": bool((state.get("find") or {}).get("access_token")),
-            "iot_token_present": bool((state.get("iot") or {}).get("access_token")),
+            "user_id_present": bool(master and master.account.user_id),
+            "device_id_present": bool(master and master.installation.physical_address),
+            "find_token_present": bool((derived.get("find") or {}).get("access_token")),
+            "iot_token_present": bool((derived.get("iot") or {}).get("access_token")),
         }
 
     def _load_state_safe(self) -> dict[str, Any]:
         try:
             return read_json(self.state_path, required=False)
+        except Exception:
+            return {}
+
+    def _load_legacy_safe(self) -> dict[str, Any]:
+        try:
+            return read_json(self.legacy_state_path, required=False)
         except Exception:
             return {}
 
@@ -211,22 +244,46 @@ class SamsungAuth:
             if not force_refresh and token.get("access_token") and expiry > time.time() + 120:
                 return str(token["access_token"])
 
-            # Sync with master state if needed
-            master = self.master_store.load(allow_legacy_fallback=True)
-            if master:
-                state.setdefault("userauth_token", master.identity.userauth_token)
-                state.setdefault("auth_server_url", master.identity.auth_server_url)
-                state.setdefault("device_id", master.installation.physical_address)
-                state.setdefault("login_id", master.account.login_id)
-                state.setdefault("user_id", master.account.user_id)
-                state["master_generation"] = master.generation
+            # Read-only fallback check for unmigrated legacy state
+            if not self.state_path.exists() and self.legacy_state_path.exists():
+                legacy_data = self._load_legacy_safe()
+                leg_token = legacy_data.get(kind.name) or {}
+                leg_expiry = float(leg_token.get("expires_at", 0))
+                if not force_refresh and leg_token.get("access_token") and leg_expiry > time.time() + 120:
+                    return str(leg_token["access_token"])
+                # Expired or force_refresh requires canonical migration
+                raise AuthError(
+                    "Legacy authentication state requires migration to canonical storage before refreshing tokens. "
+                    "Run 'samsung-find migrate-master'"
+                )
 
-            state[kind.name] = self._refresh_or_reissue(state, kind)
+            master = self.master_store.load(allow_legacy_fallback=False)
+            if not master or not master.identity.userauth_token:
+                raise AuthError("Authentication required: no master token found")
+
+            new_token = self._refresh_or_reissue(
+                token,
+                kind,
+                userauth_token=master.identity.userauth_token,
+                auth_server_url=master.identity.auth_server_url,
+                device_id=master.installation.physical_address,
+                login_id=master.account.login_id,
+            )
+            state[kind.name] = new_token
+            state["master_generation"] = master.generation
+            state["updated_at"] = int(time.time())
+            state.setdefault("schema", 1)
+            state.setdefault("created_at", int(time.time()))
             atomic_write_json(self.state_path, state)
-            return str(state[kind.name]["access_token"])
+            return str(new_token["access_token"])
 
     def state(self) -> dict[str, Any]:
-        return read_json(self.state_path)
+        """Return derived state, falling back to legacy for compatibility."""
+        if self.state_path.exists():
+            return read_json(self.state_path)
+        if self.legacy_state_path.exists():
+            return read_json(self.legacy_state_path)
+        return {}
 
     def web_session_cookie(self, *, force_refresh: bool = False) -> str:
         """Return a valid SmartThings Find web JSESSIONID."""
@@ -236,14 +293,14 @@ class SamsungAuth:
             if current and not force_refresh and self._validate_web_cookie(str(current)):
                 return str(current)
 
-            master = self.master_store.load(allow_legacy_fallback=True)
-            if master:
-                state.setdefault("userauth_token", master.identity.userauth_token)
-                state.setdefault("auth_server_url", master.identity.auth_server_url)
-                state.setdefault("device_id", master.installation.physical_address)
-                state.setdefault("login_id", master.account.login_id)
+            if not self.state_path.exists() and self.legacy_state_path.exists():
+                legacy_data = self._load_legacy_safe()
+                leg_current = (legacy_data.get("web") or {}).get("jsessionid")
+                if leg_current and not force_refresh and self._validate_web_cookie(str(leg_current)):
+                    return str(leg_current)
 
-            if not state.get("userauth_token"):
+            master = self.master_store.load(allow_legacy_fallback=True)
+            if not master or not master.identity.userauth_token:
                 raise AuthError("Authentication required: no master token found")
 
             params = {
@@ -251,25 +308,25 @@ class SamsungAuth:
                 "serviceType": "M",
                 "client_id": WEB_FIND_CLIENT_ID,
                 "childAccountSupported": "Y",
-                "userauth_token": state["userauth_token"],
-                "physical_address_text": state.get("device_id", ""),
+                "userauth_token": master.identity.userauth_token,
+                "physical_address_text": master.installation.physical_address,
                 "scope": IOT_SCOPE,
-                "login_id": state.get("login_id", ""),
+                "login_id": master.account.login_id,
             }
-            response = self.http.get(f"{state['auth_server_url']}/auth/oauth2/v2/authorize", params=params)
+            response = self.http.get(f"{master.identity.auth_server_url}/auth/oauth2/v2/authorize", params=params)
             self._raise(response, "web Find authorization")
             auth_data = response.json()
             code = auth_data.get("code")
             if not code and auth_data.get("privacyAccepted") == "N":
                 params.pop("login_id", None)
-                response = self.http.get(f"{state['auth_server_url']}/auth/oauth2/v2/authorize", params=params)
+                response = self.http.get(f"{master.identity.auth_server_url}/auth/oauth2/v2/authorize", params=params)
                 self._raise(response, "web Find authorization without login_id")
                 auth_data = response.json()
                 code = auth_data.get("code")
             if not code:
                 raise AuthError("Samsung omitted the web Find authorization code")
 
-            auth_host = urllib.parse.urlparse(state["auth_server_url"]).netloc
+            auth_host = urllib.parse.urlparse(master.identity.auth_server_url).netloc
             with httpx.Client(timeout=30.0, follow_redirects=True) as web:
                 response = web.get(
                     "https://smartthingsfind.samsung.com/getState.do",
@@ -296,7 +353,11 @@ class SamsungAuth:
                 jsessionid = cookies[-1]
             if not self._validate_web_cookie(jsessionid):
                 raise AuthError("Samsung issued a web Find cookie that failed validation")
-            state["web"] = {"jsessionid": jsessionid, "obtained_at": int(time.time())}
+
+            state["web"] = {"jsessionid": jsessionid, "updated_at": int(time.time())}
+            state.setdefault("schema", 1)
+            state.setdefault("created_at", int(time.time()))
+            state["updated_at"] = int(time.time())
             atomic_write_json(self.state_path, state)
             return jsessionid
 
@@ -310,12 +371,30 @@ class SamsungAuth:
             response = web.get("https://smartthingsfind.samsung.com/chkLogin.do")
             return response.status_code == 200 and bool(response.headers.get("_csrf"))
 
-    def _refresh_or_reissue(self, state: dict[str, Any], kind: TokenKind) -> dict[str, Any]:
-        current = state.get(kind.name) or {}
-        refresh = current.get("refresh_token")
-        if refresh:
+    def _refresh_or_reissue(
+        self,
+        state_or_token: dict[str, Any],
+        kind: TokenKind,
+        *,
+        userauth_token: str | None = None,
+        auth_server_url: str | None = None,
+        device_id: str | None = None,
+        login_id: str | None = None,
+    ) -> dict[str, Any]:
+        if kind.name in state_or_token and isinstance(state_or_token[kind.name], dict):
+            token = state_or_token[kind.name]
+        else:
+            token = state_or_token
+
+        auth_server = auth_server_url or state_or_token.get("auth_server_url") or ""
+        userauth = userauth_token or state_or_token.get("userauth_token") or ""
+        dev_id = device_id or state_or_token.get("device_id") or ""
+        lgn_id = login_id or state_or_token.get("login_id") or ""
+
+        refresh = token.get("refresh_token")
+        if refresh and auth_server:
             response = self.http.post(
-                f"{state['auth_server_url']}/auth/oauth2/token",
+                f"{auth_server}/auth/oauth2/token",
                 data={
                     "grant_type": "refresh_token",
                     "client_id": kind.client_id,
@@ -324,44 +403,75 @@ class SamsungAuth:
             )
             if response.status_code == 200:
                 return self._normalize_token(response.json())
-        return self._issue_token(state, kind)
 
-    def _issue_token(self, state: dict[str, Any], kind: TokenKind) -> dict[str, Any]:
+        try:
+            return self._issue_token(
+                kind,
+                userauth_token=userauth,
+                auth_server_url=auth_server,
+                device_id=dev_id,
+                login_id=lgn_id,
+            )
+        except TypeError:
+            return self._issue_token(state_or_token, kind)
+
+    def _issue_token(
+        self,
+        kind_or_state: Any,
+        kind: TokenKind | None = None,
+        *,
+        userauth_token: str | None = None,
+        auth_server_url: str | None = None,
+        device_id: str | None = None,
+        login_id: str | None = None,
+    ) -> dict[str, Any]:
+        if isinstance(kind_or_state, TokenKind):
+            actual_kind = kind_or_state
+            state_dict: dict[str, Any] = {}
+        else:
+            state_dict = kind_or_state
+            actual_kind = kind  # type: ignore
+
+        userauth = userauth_token or state_dict.get("userauth_token") or ""
+        auth_server = auth_server_url or state_dict.get("auth_server_url") or ""
+        dev_id = device_id or state_dict.get("device_id") or ""
+        lgn_id = login_id or state_dict.get("login_id") or ""
+
         verifier = random_urlsafe(32)[:43]
         params = {
             "response_type": "code",
             "serviceType": "M",
-            "client_id": kind.client_id,
+            "client_id": actual_kind.client_id,
             "code_challenge_method": "S256",
             "childAccountSupported": "Y",
-            "userauth_token": state["userauth_token"],
+            "userauth_token": userauth,
             "code_challenge": code_challenge(verifier),
-            "physical_address_text": state["device_id"],
-            "scope": kind.scope,
-            "login_id": state["login_id"],
+            "physical_address_text": dev_id,
+            "scope": actual_kind.scope,
+            "login_id": lgn_id,
         }
-        response = self.http.get(f"{state['auth_server_url']}/auth/oauth2/v2/authorize", params=params)
-        self._raise(response, f"{kind.name} authorization")
+        response = self.http.get(f"{auth_server}/auth/oauth2/v2/authorize", params=params)
+        self._raise(response, f"{actual_kind.name} authorization")
         auth_data = response.json()
         code = auth_data.get("code")
         if not code and auth_data.get("privacyAccepted") == "N":
             params.pop("login_id", None)
-            response = self.http.get(f"{state['auth_server_url']}/auth/oauth2/v2/authorize", params=params)
-            self._raise(response, f"{kind.name} authorization without login_id")
+            response = self.http.get(f"{auth_server}/auth/oauth2/v2/authorize", params=params)
+            self._raise(response, f"{actual_kind.name} authorization without login_id")
             code = response.json().get("code")
         if not code:
-            raise AuthError(f"Samsung omitted the {kind.name} authorization code")
+            raise AuthError(f"Samsung omitted the {actual_kind.name} authorization code")
         response = self.http.post(
-            f"{state['auth_server_url']}/auth/oauth2/token",
+            f"{auth_server}/auth/oauth2/token",
             data={
                 "grant_type": "authorization_code",
-                "client_id": kind.client_id,
+                "client_id": actual_kind.client_id,
                 "code": code,
                 "code_verifier": verifier,
-                "physical_address_text": state["device_id"],
+                "physical_address_text": dev_id,
             },
         )
-        self._raise(response, f"{kind.name} token exchange")
+        self._raise(response, f"{actual_kind.name} token exchange")
         return self._normalize_token(response.json())
 
     @staticmethod

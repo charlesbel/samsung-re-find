@@ -11,8 +11,10 @@ import httpx
 
 from .api import SamsungFindClient
 from .auth import SamsungAuth
-from .constants import DEFAULT_PENDING_PATH, DEFAULT_REDIRECT_PATH, DEFAULT_STATE_PATH
-from .credentials import MasterStateStore
+from .credentials import (
+    MasterStateStore,
+    resolve_redirect_path,
+)
 from .exceptions import (
     AuthError,
     DeviceNotFoundError,
@@ -46,9 +48,10 @@ def parser() -> argparse.ArgumentParser:
     root = SamsungFindArgumentParser(prog="samsung-find", description="Samsung Find CLI and tools")
     root.add_argument("--legacy-json", action="store_true", help="Output raw legacy JSON without v1 envelope")
     root.add_argument("--master-state", default=None, help="Path to shared Samsung master state v1")
-    root.add_argument("--state", default=DEFAULT_STATE_PATH)
-    root.add_argument("--pending", default=DEFAULT_PENDING_PATH)
-    root.add_argument("--redirect-file", default=DEFAULT_REDIRECT_PATH)
+    root.add_argument("--state", default=None, help="Path to canonical Samsung Find derived state")
+    root.add_argument("--legacy-state", default=None, help="Path to legacy Samsung Find state")
+    root.add_argument("--pending", default=None, help="Path to pending authentication file")
+    root.add_argument("--redirect-file", default=None, help="Path to OAuth redirect URI file")
     root.add_argument("--country", default=os.environ.get("SAMSUNG_FIND_COUNTRY", "US"))
     root.add_argument("--language", default=os.environ.get("SAMSUNG_FIND_LANGUAGE", "en"))
     root.add_argument("--timezone", default=os.environ.get("SAMSUNG_FIND_TIMEZONE", "UTC"))
@@ -59,7 +62,7 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("--locale", default="en-US")
     commands.add_parser("auth-complete", help="Consume the securely captured redirect URI")
     migrate = commands.add_parser("migrate-master", help="Migrate legacy state to neutral master state v1")
-    migrate.add_argument("--from-state", default=None, help="Legacy state path")
+    migrate.add_argument("--from-state", default=None, help="Legacy state path (defaults to legacy standard path)")
     migrate.add_argument("--force", action="store_true", help="Force overwrite existing master state")
     commands.add_parser("status", help="Check local authentication status")
     commands.add_parser("verify", help="Verify connection and SmartThings Find session")
@@ -88,11 +91,12 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
-def install_handler(redirect_path: str) -> dict[str, object]:
+def install_handler(redirect_path: str | Path | None = None) -> dict[str, object]:
+    target_redirect = resolve_redirect_path(redirect_path)
     applications = Path("~/.local/share/applications").expanduser()
     applications.mkdir(parents=True, exist_ok=True)
     desktop = applications / "samsung-find-callback.desktop"
-    env_path = str(Path(redirect_path).expanduser().resolve())
+    env_path = str(target_redirect)
     exec_line = f"env SAMSUNG_FIND_REDIRECT_PATH={env_path} {sys.executable} -m samsung_find.capture_redirect %u"
     desktop.write_text(
         "[Desktop Entry]\n"
@@ -124,7 +128,12 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else 2
 
-    auth = SamsungAuth(args.state, args.pending, master_path=args.master_state)
+    auth = SamsungAuth(
+        state_path=args.state,
+        pending_path=args.pending,
+        master_path=args.master_state,
+        legacy_state_path=args.legacy_state,
+    )
     client: SamsungFindClient | None = None
     legacy = getattr(args, "legacy_json", False)
 
@@ -134,12 +143,14 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "auth-start":
             emit({"login_url": auth.start(args.country, args.locale)}, legacy_json=legacy)
         elif args.command == "auth-complete":
-            redirect = secure_read_text(args.redirect_file)
+            redirect_target = resolve_redirect_path(args.redirect_file)
+            redirect = secure_read_text(redirect_target)
             emit(auth.complete(redirect), legacy_json=legacy)
         elif args.command == "migrate-master":
             store = MasterStateStore(
                 master_path=args.master_state,
-                legacy_path=args.from_state or args.state,
+                canonical_state_path=args.state,
+                legacy_path=args.from_state or args.legacy_state,
             )
             emit(store.migrate_legacy(force=args.force), legacy_json=legacy)
         elif args.command == "status":

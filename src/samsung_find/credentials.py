@@ -18,6 +18,42 @@ from .storage import atomic_write_json, locked, read_json
 MASTER_SCHEMA_ID = "io.github.charlesbel.samsung-account.master"
 MASTER_SCHEMA_VERSION = 1
 
+FORBIDDEN_DERIVED_KEYS = frozenset(
+    {
+        "userauth_token",
+        "login_id",
+        "user_id",
+        "physical_address",
+        "device_id",
+        "auth_server_url",
+        "account",
+        "identity",
+        "installation",
+    }
+)
+
+ALLOWED_DERIVED_KEYS = frozenset(
+    {
+        "schema",
+        "master_generation",
+        "created_at",
+        "updated_at",
+        "find",
+        "iot",
+        "web",
+    }
+)
+
+
+def validate_derived_state(data: dict[str, Any]) -> dict[str, Any]:
+    """Validate that derived state contains no master identity fields."""
+    if not isinstance(data, dict):
+        raise SecurityError("Derived state must be a JSON dictionary")
+    for key in data:
+        if key in FORBIDDEN_DERIVED_KEYS:
+            raise SecurityError(f"Forbidden master key in derived state: {key!r}")
+    return data
+
 
 @dataclass(frozen=True)
 class MasterAccount:
@@ -180,7 +216,7 @@ def validate_auth_server_url(value: str) -> str:
 
 
 def resolve_master_state_path(explicit_path: str | Path | None = None) -> Path:
-    """Resolve the master state file location using standard priority order."""
+    """Resolve the master state file location using standard OS conventions."""
     if explicit_path:
         return Path(explicit_path).expanduser().resolve()
 
@@ -200,23 +236,107 @@ def resolve_master_state_path(explicit_path: str | Path | None = None) -> Path:
         return (base / "samsung-account" / "master.json").resolve()
 
 
-def resolve_legacy_find_state_path() -> Path:
-    """Resolve the legacy Find state file path."""
-    xdg_config = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(xdg_config) if xdg_config else Path.home() / ".config"
-    return (base / "samsung-find" / "state.json").resolve()
+def resolve_find_state_path(explicit_path: str | Path | None = None) -> Path:
+    """Resolve canonical Find derived state location using standard OS conventions."""
+    if explicit_path:
+        return Path(explicit_path).expanduser().resolve()
+
+    env_path = os.environ.get("SAMSUNG_FIND_STATE")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    if sys.platform == "win32":
+        app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        base = Path(app_data) if app_data else Path.home() / "AppData" / "Local"
+        return (base / "samsung-find" / "state.json").resolve()
+    elif sys.platform == "darwin":
+        return (Path.home() / "Library" / "Application Support" / "samsung-find" / "state.json").resolve()
+    else:
+        xdg_state = os.environ.get("XDG_STATE_HOME")
+        base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
+        return (base / "samsung-find" / "state.json").resolve()
+
+
+def resolve_legacy_find_state_path(explicit_path: str | Path | None = None) -> Path:
+    """Resolve the legacy Find state file path (${XDG_CONFIG_HOME:-~/.config}/samsung-find/state.json)."""
+    if explicit_path:
+        return Path(explicit_path).expanduser().resolve()
+
+    env_path = os.environ.get("SAMSUNG_FIND_LEGACY_STATE")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    if sys.platform == "win32":
+        app_data = os.environ.get("APPDATA")
+        base = Path(app_data) if app_data else Path.home() / "AppData" / "Roaming"
+        return (base / "samsung-find" / "state.json").resolve()
+    elif sys.platform == "darwin":
+        return (Path.home() / "Library" / "Application Support" / "samsung-find" / "state.json").resolve()
+    else:
+        xdg_config = os.environ.get("XDG_CONFIG_HOME")
+        base = Path(xdg_config) if xdg_config else Path.home() / ".config"
+        return (base / "samsung-find" / "state.json").resolve()
+
+
+def resolve_pending_path(explicit_path: str | Path | None = None) -> Path:
+    """Resolve the pending authentication file path."""
+    if explicit_path:
+        return Path(explicit_path).expanduser().resolve()
+
+    env_path = os.environ.get("SAMSUNG_FIND_PENDING")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    if sys.platform == "win32":
+        app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        base = Path(app_data) if app_data else Path.home() / "AppData" / "Local"
+        return (base / "samsung-find" / "pending.json").resolve()
+    elif sys.platform == "darwin":
+        return (Path.home() / "Library" / "Application Support" / "samsung-find" / "pending.json").resolve()
+    else:
+        xdg_state = os.environ.get("XDG_STATE_HOME")
+        base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
+        return (base / "samsung-find" / "pending.json").resolve()
+
+
+def resolve_redirect_path(explicit_path: str | Path | None = None) -> Path:
+    """Resolve the OAuth redirect file path."""
+    if explicit_path:
+        return Path(explicit_path).expanduser().resolve()
+
+    env_path = os.environ.get("SAMSUNG_FIND_REDIRECT_PATH")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    if sys.platform == "win32":
+        app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        base = Path(app_data) if app_data else Path.home() / "AppData" / "Local"
+        return (base / "samsung-find" / "redirect.uri").resolve()
+    elif sys.platform == "darwin":
+        return (Path.home() / "Library" / "Application Support" / "samsung-find" / "redirect.uri").resolve()
+    else:
+        xdg_state = os.environ.get("XDG_STATE_HOME")
+        base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
+        return (base / "samsung-find" / "redirect.uri").resolve()
 
 
 class MasterStateStore:
-    """Store for managing shared Samsung master credentials."""
+    """Store for managing shared Samsung master credentials and migration."""
 
     def __init__(
         self,
         master_path: str | Path | None = None,
+        canonical_state_path: str | Path | None = None,
         legacy_path: str | Path | None = None,
     ):
         self.master_path = resolve_master_state_path(master_path)
-        self.legacy_path = Path(legacy_path).expanduser().resolve() if legacy_path else resolve_legacy_find_state_path()
+        if canonical_state_path is not None:
+            self.canonical_state_path = resolve_find_state_path(canonical_state_path)
+        elif master_path is not None:
+            self.canonical_state_path = (self.master_path.parent / "state.json").resolve()
+        else:
+            self.canonical_state_path = resolve_find_state_path(None)
+        self.legacy_path = resolve_legacy_find_state_path(legacy_path)
 
     def exists(self) -> bool:
         return self.master_path.exists()
@@ -291,6 +411,10 @@ class MasterStateStore:
             ),
         )
 
+    def _atomic_write_derived(self, path: Path, data: dict[str, Any]) -> None:
+        validate_derived_state(data)
+        atomic_write_json(path, data)
+
     def load(self, *, allow_legacy_fallback: bool = True) -> MasterState | None:
         if self.master_path.exists():
             with locked(self.master_path):
@@ -298,7 +422,8 @@ class MasterStateStore:
 
         if allow_legacy_fallback and self.legacy_path.exists():
             warnings.warn(
-                "Using legacy authentication state from samsung-find. Run 'samsung-find migrate-master' to migrate.",
+                "Using legacy authentication state from samsung-find. "
+                "Run 'samsung-find auth migrate-master' to migrate.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -327,26 +452,14 @@ class MasterStateStore:
             )
 
     def migrate_legacy(self, *, force: bool = False) -> dict[str, Any]:
-        """Migrate legacy samsung-find state to shared master-state-v1 non-destructively."""
-        paths = sorted([self.master_path, self.legacy_path], key=lambda p: str(p.resolve()))
+        """Migrate legacy samsung-find state to shared master-state-v1 and clean derived state."""
+        paths = sorted([self.master_path, self.canonical_state_path, self.legacy_path], key=lambda p: str(p.resolve()))
 
-        with locked(paths[0]), locked(paths[1]):
-            if self.master_path.exists() and not force:
-                try:
-                    existing = self._load_master_locked()
-                    if existing and existing.identity.userauth_token:
-                        return {
-                            "migrated": False,
-                            "source_kind": "legacy_samsung_find",
-                            "target_kind": "master_state_v1",
-                            "schema_version": MASTER_SCHEMA_VERSION,
-                        }
-                except Exception:
-                    pass
-
+        with locked(paths[0]), locked(paths[1]), locked(paths[2]):
             if not self.legacy_path.exists():
-                raise AuthError("Legacy state file does not exist")
+                raise AuthError(f"Legacy state file does not exist: {self.legacy_path.name}")
 
+            legacy_content = self.legacy_path.read_text(encoding="utf-8")
             try:
                 legacy_data = read_json(self.legacy_path)
             except Exception as exc:
@@ -369,19 +482,81 @@ class MasterStateStore:
             auth_server = validate_auth_server_url(auth_server_raw)
             user_id = str(legacy_data.get("user_id")) if legacy_data.get("user_id") else None
 
-            # Save new master state using lock-held internal helper
-            self._save_master_locked(
-                login_id=login_id.strip(),
-                user_id=user_id,
-                physical_address=device_id.strip(),
-                auth_server_url=auth_server,
-                userauth_token=userauth.strip(),
+            gen = str(uuid.uuid4())
+            now = time.time()
+            candidate_master = MasterState(
+                schema=MASTER_SCHEMA_ID,
+                schema_version=MASTER_SCHEMA_VERSION,
+                generation=gen,
+                created_at=float(legacy_data.get("created_at", now)),
+                updated_at=now,
+                account=MasterAccount(login_id=login_id.strip(), user_id=user_id),
+                installation=MasterInstallation(physical_address=device_id.strip()),
+                identity=MasterIdentity(auth_server_url=auth_server, userauth_token=userauth.strip()),
             )
 
-            # Validate the newly created master state
-            verified = self._load_master_locked()
-            if not verified or verified.identity.userauth_token != userauth.strip():
-                raise AuthError("Master state verification failed after migration")
+            clean_derived: dict[str, Any] = {
+                "schema": 1,
+                "master_generation": gen,
+                "created_at": float(legacy_data.get("created_at", now)),
+                "updated_at": now,
+            }
+            if isinstance(legacy_data.get("find"), dict):
+                clean_derived["find"] = {
+                    k: v
+                    for k, v in legacy_data["find"].items()
+                    if k in {"access_token", "refresh_token", "expires_at", "token_type", "scope"}
+                }
+            if isinstance(legacy_data.get("iot"), dict):
+                clean_derived["iot"] = {
+                    k: v
+                    for k, v in legacy_data["iot"].items()
+                    if k in {"access_token", "refresh_token", "expires_at", "token_type", "scope"}
+                }
+            if isinstance(legacy_data.get("web"), dict):
+                clean_derived["web"] = {
+                    k: v for k, v in legacy_data["web"].items() if k in {"jsessionid", "updated_at"}
+                }
+
+            master_exists = self.master_path.exists()
+            derived_exists = self.canonical_state_path.exists()
+
+            if master_exists and not force:
+                try:
+                    existing_master = self._load_master_locked()
+                    if (
+                        existing_master
+                        and existing_master.account.login_id == candidate_master.account.login_id
+                        and existing_master.identity.userauth_token == candidate_master.identity.userauth_token
+                    ):
+                        return {
+                            "migrated": False,
+                            "source_kind": "legacy_samsung_find",
+                            "target_kind": "master_state_v1",
+                            "schema_version": MASTER_SCHEMA_VERSION,
+                        }
+                except Exception:
+                    pass
+                raise AuthError(
+                    "Target master or derived state already exists with conflicting data. Use --force to overwrite."
+                )
+
+            if derived_exists and not force and not master_exists:
+                raise AuthError(
+                    "Target master or derived state already exists with conflicting data. Use --force to overwrite."
+                )
+
+            # Two-phase atomic write with rollback on second-write failure
+            atomic_write_json(self.master_path, candidate_master.to_dict())
+            try:
+                self._atomic_write_derived(self.canonical_state_path, clean_derived)
+            except BaseException:
+                if not master_exists:
+                    self.master_path.unlink(missing_ok=True)
+                raise
+
+            # Verify legacy state was byte-for-byte untouched
+            assert self.legacy_path.read_text(encoding="utf-8") == legacy_content
 
             return {
                 "migrated": True,

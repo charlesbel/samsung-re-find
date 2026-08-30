@@ -9,18 +9,18 @@ This document details the migration path from `samsung-find-agent` v0.1.0 to `sa
    - Python import remains: `samsung_find`.
    - CLI command remains: `samsung-find`.
 
-2. **Shared Master Authentication Contract (v1):**
-   - In v0.1.0, master credentials and service-specific session cookies were stored together in `~/.config/samsung-find/state.json`.
-   - In v0.2.0, the neutral Samsung master token is stored in `~/.config/samsung-account/master.json` (`master-state-v1` contract), enabling shared authentication with companion projects like `samsung-health-cloud` without re-login.
-   - Derived tokens and web cookies remain isolated in `~/.config/samsung-find/state.json`.
+2. **State Boundary Separation & Master Contract (v1):**
+   - In v0.1.0, master credentials and service-specific session cookies were stored together in legacy `~/.config/samsung-find/state.json`.
+   - In v0.2.0, the neutral Samsung master identity is stored in `~/.config/samsung-account/master.json` (`master-state-v1` contract), enabling shared authentication with companion projects like `samsung-health-cloud` without re-login.
+   - Canonical Find derived tokens and web cookies are stored cleanly in `~/.local/state/samsung-find/state.json` (`platformdirs.user_state_dir("samsung-find")/state.json`), completely free of master identity credentials.
 
 3. **Non-Destructive Local Migration:**
    - Run the migration command:
      ```bash
      samsung-find migrate-master
      ```
-   - This reads your existing `state.json`, constructs the versioned `master-state-v1` file, and saves it atomically with mode `0600`.
-   - Your existing `state.json` file is left completely intact.
+   - This reads your existing legacy `state.json`, constructs the versioned `master-state-v1` file and clean derived state, and saves them atomically with mode `0600`.
+   - Your existing legacy `state.json` file is left byte-for-byte intact.
    - No interactive re-login or credentials entry is required.
 
 4. **SDK Modernization:**
