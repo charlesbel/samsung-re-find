@@ -39,7 +39,7 @@ def test_models_repr_does_not_leak_secrets_or_ids():
         latitude=48.8566,
         longitude=2.3522,
         accuracy_m=10.0,
-        timestamp="2026-08-30T12:00:00Z",
+        timestamp="2026-08-30T12:00:00+00:00",
         is_fresh=True,
     )
     assert repr(loc) is not None
@@ -48,7 +48,7 @@ def test_models_repr_does_not_leak_secrets_or_ids():
         id="dev-12345678-secret-id",
         name="Galaxy Phone",
         model="SM-S928B",
-        location_type="precise",
+        location_type="PHONE",
     )
     # Ensure ID is never in repr
     assert "dev-12345678-secret-id" not in repr(dev)
@@ -62,7 +62,7 @@ def test_device_id_masking_by_default_and_opt_in():
             "id": "secret-device-uuid-999",
             "name": "My Galaxy Phone",
             "model": "SM-S928B",
-            "location_type": "precise",
+            "location_type": "PHONE",
         }
     ]
     service = FindService(client=fake_transport)
@@ -89,31 +89,69 @@ def test_device_id_masking_by_default_and_opt_in():
 def test_typed_facade_method_signatures_and_returns():
     fake_transport = MagicMock()
     fake_transport.capabilities.return_value = {
+        "device": {"name": "Galaxy Phone", "model": "SM-S928B", "location_type": "PHONE"},
+        "passive_location": True,
+        "active_location": True,
+        "connection_check": True,
+        "battery_status": True,
         "ring": True,
-        "track": False,
-        "locate": True,
-        "check_connection": True,
-        "features": ["ring", "locate"],
+        "continuous_tracking": False,
+        "remote_lock": "discovered_not_exposed",
+        "remote_wipe": "discovered_not_exposed",
     }
     fake_transport.locate.return_value = {
+        "device": {"name": "Galaxy Phone", "model": "SM-S928B", "location_type": "PHONE"},
         "latitude": 48.8566,
         "longitude": 2.3522,
         "accuracy_m": 12.5,
-        "is_fresh": True,
-        "is_precise": True,
-        "address": "Paris, France",
+        "last_update": "2026-08-30T12:00:00+00:00",
+        "timezone": "UTC",
+        "age_seconds": 45,
+        "battery": "90",
+        "operation": "LOCATION",
+        "active_refresh_requested": True,
+        "active_operation": {"accepted": True, "operation": {"result": "success"}},
+        "fresh_location_obtained": True,
+        "maps_url": "https://www.google.com/maps?q=48.8566,2.3522",
     }
     fake_transport.check_connection.return_value = {
-        "reachable": True,
-        "battery": "90",
+        "device": {"name": "Galaxy Phone"},
+        "requested_operation": "CHECK_CONNECTION",
+        "accepted": True,
         "request_id": "req-1",
+        "operation": {
+            "type": "CHECK_CONNECTION",
+            "status_code": "2800",
+            "result_code": "1200",
+            "result": "success",
+            "battery_percent": 90,
+        },
     }
     fake_transport.ring.return_value = {
+        "device": {"name": "Galaxy Phone"},
+        "requested_operation": "RING",
+        "accepted": True,
         "request_id": "req-2",
-        "status_code": "200",
+        "operation": {
+            "type": "RING",
+            "status_code": "2800",
+            "result_code": "1200",
+            "result": "success",
+            "battery_percent": None,
+        },
     }
     fake_transport.track.return_value = {
+        "device": {"name": "Galaxy Phone"},
+        "requested_operation": "TRACK_LOCATION_START",
+        "accepted": True,
         "request_id": "req-3",
+        "operation": {
+            "type": "TRACK_LOCATION_START",
+            "status_code": "2100",
+            "result_code": None,
+            "result": "success",
+            "battery_percent": None,
+        },
     }
 
     service = FindService(client=fake_transport)
@@ -124,14 +162,20 @@ def test_typed_facade_method_signatures_and_returns():
     assert isinstance(caps, DeviceCapabilities)
     assert caps.can_ring is True
     assert caps.can_track is False
-    assert not hasattr(caps, "raw") or getattr(caps, "raw", None) is None or caps.raw == {}
+    assert caps.passive_location is True
+    assert caps.active_location is True
+    assert caps.battery_status is True
+    assert not hasattr(caps, "raw")
 
     # Last location
     loc = client.get_last_location("Galaxy Phone")
     assert isinstance(loc, LocationResult)
     assert loc.latitude == 48.8566
     assert loc.longitude == 2.3522
+    assert loc.timestamp == "2026-08-30T12:00:00+00:00"
     assert loc.is_fresh is True
+    assert loc.is_precise is True
+    assert loc.map_url == "https://www.google.com/maps?q=48.8566,2.3522"
 
     # Request location
     req_loc = client.request_location("Galaxy Phone", poll_seconds=10)
@@ -142,38 +186,57 @@ def test_typed_facade_method_signatures_and_returns():
     conn = client.check_connection("Galaxy Phone")
     assert isinstance(conn, OperationResult)
     assert conn.operation == "CHECK_CONNECTION"
+    assert conn.accepted is True
     assert conn.success is True
     assert conn.battery == "90"
-    assert "details" not in conn.to_dict()
+    assert conn.request_id == "req-1"
 
     # Ring
     ring_res = client.ring("Galaxy Phone", status="start")
     assert isinstance(ring_res, OperationResult)
     assert ring_res.operation == "RING"
+    assert ring_res.accepted is True
     assert ring_res.success is True
+    assert ring_res.request_id == "req-2"
 
     # Tracking
     track_res = client.set_tracking("Galaxy Phone", enabled=True)
     assert isinstance(track_res, OperationResult)
     assert track_res.operation == "TRACK_LOCATION_START"
+    assert track_res.accepted is True
+    assert track_res.success is True
+    assert track_res.request_id == "req-3"
 
 
-def test_missing_coordinates_remain_none_not_fabricated():
+def test_missing_coordinates_and_metadata_remain_none():
     fake_transport = MagicMock()
     fake_transport.locate.return_value = {
+        "device": {"name": "Galaxy Watch", "location_type": "UNKNOWN"},
+        "latitude": None,
+        "longitude": None,
         "accuracy_m": None,
-        "is_fresh": False,
-        "is_precise": False,
-        "address": None,
+        "last_update": None,
+        "timezone": "UTC",
+        "age_seconds": None,
+        "battery": None,
+        "operation": None,
+        "active_refresh_requested": False,
+        "active_operation": None,
+        "fresh_location_obtained": False,
+        "maps_url": None,
     }
     service = FindService(client=fake_transport)
     client = FacadeClient(service=service)
 
-    loc = client.get_last_location("Galaxy Phone")
+    loc = client.get_last_location("Galaxy Watch")
     assert isinstance(loc, LocationResult)
     assert loc.latitude is None
     assert loc.longitude is None
     assert loc.accuracy_m is None
+    assert loc.timestamp is None
+    assert loc.is_fresh is False
+    assert loc.is_precise is False
+    assert loc.map_url is None
     assert loc.to_dict()["latitude"] is None
     assert loc.to_dict()["longitude"] is None
 

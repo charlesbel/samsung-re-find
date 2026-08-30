@@ -230,9 +230,10 @@ def test_operation_poll_ignores_stale_request_ids(monkeypatch):
     monkeypatch.setattr("samsung_find.api.time.sleep", lambda _seconds: None)
 
     result = client.check_connection("Primary Galaxy", poll_seconds=1)
-
     assert result["operation"]["battery_percent"] == 80
-    assert "request_id" not in json.dumps(result)
+    assert result["request_id"] == "new-request"
+    assert "dvceId" not in json.dumps(result)
+    assert "usrId" not in json.dumps(result)
 
 
 def test_operation_fails_closed_when_acceptance_omits_request_id(monkeypatch):

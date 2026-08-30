@@ -361,6 +361,7 @@ class SamsungFindClient:
                 "device": {key: device.get(key) for key in ("name", "model", "location_type")},
                 "requested_operation": operation,
                 "accepted": True,
+                "request_id": str(request_id) if request_id else None,
                 "operation": latest,
             }
         finally:
