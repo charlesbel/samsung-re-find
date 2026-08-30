@@ -13,6 +13,7 @@ import httpx
 from .api import SamsungFindClient
 from .auth import SamsungAuth, SamsungAuthError
 from .constants import DEFAULT_PENDING_PATH, DEFAULT_REDIRECT_PATH, DEFAULT_STATE_PATH
+from .credentials import MasterStateStore
 from .storage import secure_read_text
 
 
@@ -22,6 +23,7 @@ def emit(value: object) -> None:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="samsung-find")
+    root.add_argument("--master-state", default=None, help="Path to shared Samsung master state v1")
     root.add_argument("--state", default=DEFAULT_STATE_PATH)
     root.add_argument("--pending", default=DEFAULT_PENDING_PATH)
     root.add_argument("--redirect-file", default=DEFAULT_REDIRECT_PATH)
@@ -34,6 +36,9 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("--country", default="us")
     start.add_argument("--locale", default="en-US")
     commands.add_parser("auth-complete", help="Consume the securely captured redirect URI")
+    migrate = commands.add_parser("migrate-master", help="Migrate legacy state to neutral master state v1")
+    migrate.add_argument("--from-state", default=None, help="Legacy state path")
+    migrate.add_argument("--force", action="store_true", help="Force overwrite existing master state")
     commands.add_parser("status")
     commands.add_parser("verify")
     devices = commands.add_parser("devices")
@@ -96,7 +101,7 @@ def install_handler(redirect_path: str) -> dict[str, object]:
 
 def main() -> int:
     args = parser().parse_args()
-    auth = SamsungAuth(args.state, args.pending)
+    auth = SamsungAuth(args.state, args.pending, master_path=args.master_state)
     client: SamsungFindClient | None = None
     try:
         if args.command == "install-handler":
@@ -106,6 +111,12 @@ def main() -> int:
         elif args.command == "auth-complete":
             redirect = secure_read_text(args.redirect_file)
             emit(auth.complete(redirect))
+        elif args.command == "migrate-master":
+            store = MasterStateStore(
+                master_path=args.master_state,
+                legacy_path=args.from_state or args.state,
+            )
+            emit(store.migrate_legacy(force=args.force))
         elif args.command == "status":
             emit(auth.public_status())
         else:

@@ -304,3 +304,63 @@ class MasterStateStore:
             atomic_write_json(self.master_path, state.to_dict())
 
         return state
+
+    def migrate_legacy(self, *, force: bool = False) -> dict[str, Any]:
+        """Migrate legacy samsung-find state to shared master-state-v1 non-destructively."""
+        # Determine deterministic lock acquisition order
+        paths = sorted([self.master_path, self.legacy_path], key=lambda p: str(p.resolve()))
+
+        with locked(paths[0]), locked(paths[1]):
+            if self.master_path.exists() and not force:
+                try:
+                    existing = self.load(allow_legacy_fallback=False)
+                    if existing and existing.identity.userauth_token:
+                        return {
+                            "migrated": False,
+                            "source_kind": "legacy_samsung_find",
+                            "target_kind": "master_state_v1",
+                            "schema_version": MASTER_SCHEMA_VERSION,
+                        }
+                except Exception:
+                    pass
+
+            if not self.legacy_path.exists():
+                raise AuthError("Legacy state file does not exist")
+
+            try:
+                legacy_data = read_json(self.legacy_path)
+            except Exception as exc:
+                raise AuthError(f"Failed to read legacy state: {exc}") from exc
+
+            userauth = legacy_data.get("userauth_token")
+            if not userauth:
+                raise AuthError("Legacy state is missing master userauth_token")
+
+            login_id = str(legacy_data.get("login_id", "legacy_user"))
+            device_id = str(legacy_data.get("device_id", "legacy_device"))
+            user_id = str(legacy_data.get("user_id")) if legacy_data.get("user_id") else None
+            auth_server = validate_auth_server_url(
+                legacy_data.get("auth_server_url", "https://auth.samsungosp.com")
+            )
+
+            # Save new master state
+            self.save(
+                login_id=login_id,
+                user_id=user_id,
+                physical_address=device_id,
+                auth_server_url=auth_server,
+                userauth_token=str(userauth),
+            )
+
+            # Validate the newly created master state
+            verified = self.load(allow_legacy_fallback=False)
+            if not verified or verified.identity.userauth_token != str(userauth):
+                raise AuthError("Master state verification failed after migration")
+
+            return {
+                "migrated": True,
+                "source_kind": "legacy_samsung_find",
+                "target_kind": "master_state_v1",
+                "schema_version": MASTER_SCHEMA_VERSION,
+            }
+
