@@ -70,9 +70,9 @@ Default files:
 
 ```text
 ~/.config/samsung-account/master.json
+~/.config/samsung-account/pending.json
+~/.config/samsung-account/redirect.uri
 ~/.local/state/samsung-find/state.json
-~/.local/state/samsung-find/pending.json
-~/.local/state/samsung-find/redirect.uri
 ```
 
 Security properties:

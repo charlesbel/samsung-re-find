@@ -472,46 +472,60 @@ def resolve_legacy_find_state_path(explicit_path: str | Path | None = None) -> P
         return expand(base / "samsung-find" / "state.json")
 
 
-def resolve_pending_path(explicit_path: str | Path | None = None) -> Path:
-    """Resolve the pending authentication file path."""
+def resolve_pending_path(
+    explicit_path: str | Path | None = None,
+    master_path: str | Path | None = None,
+) -> Path:
+    """Resolve the shared pending Samsung Account authentication path."""
     if explicit_path:
         return expand(explicit_path)
 
-    env_path = os.environ.get("SAMSUNG_FIND_PENDING")
+    env_path = (
+        os.environ.get("SAMSUNG_ACCOUNT_PENDING_PATH")
+        or os.environ.get("SAMSUNG_ACCOUNT_PENDING")
+        or os.environ.get("SAMSUNG_FIND_PENDING")
+    )
     if env_path:
         return expand(env_path)
+    if master_path is not None:
+        return expand(Path(master_path).parent / "pending.json")
 
     if sys.platform == "win32":
-        app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-        base = Path(app_data) if app_data else Path.home() / "AppData" / "Local"
-        return expand(base / "samsung-find" / "pending.json")
+        app_data = os.environ.get("APPDATA")
+        base = Path(app_data) if app_data else Path.home() / "AppData" / "Roaming"
+        return expand(base / "samsung-account" / "pending.json")
     elif sys.platform == "darwin":
-        return expand(Path.home() / "Library" / "Application Support" / "samsung-find" / "pending.json")
+        return expand(Path.home() / "Library" / "Application Support" / "samsung-account" / "pending.json")
     else:
-        xdg_state = os.environ.get("XDG_STATE_HOME")
-        base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
-        return expand(base / "samsung-find" / "pending.json")
+        xdg_config = os.environ.get("XDG_CONFIG_HOME")
+        base = Path(xdg_config) if xdg_config else Path.home() / ".config"
+        return expand(base / "samsung-account" / "pending.json")
 
 
-def resolve_redirect_path(explicit_path: str | Path | None = None) -> Path:
-    """Resolve the OAuth redirect file path."""
+def resolve_redirect_path(
+    explicit_path: str | Path | None = None,
+    master_path: str | Path | None = None,
+) -> Path:
+    """Resolve the shared Samsung Account OAuth redirect path."""
     if explicit_path:
         return expand(explicit_path)
 
-    env_path = os.environ.get("SAMSUNG_FIND_REDIRECT_PATH")
+    env_path = os.environ.get("SAMSUNG_ACCOUNT_REDIRECT_PATH") or os.environ.get("SAMSUNG_FIND_REDIRECT_PATH")
     if env_path:
         return expand(env_path)
+    if master_path is not None:
+        return expand(Path(master_path).parent / "redirect.uri")
 
     if sys.platform == "win32":
-        app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-        base = Path(app_data) if app_data else Path.home() / "AppData" / "Local"
-        return expand(base / "samsung-find" / "redirect.uri")
+        app_data = os.environ.get("APPDATA")
+        base = Path(app_data) if app_data else Path.home() / "AppData" / "Roaming"
+        return expand(base / "samsung-account" / "redirect.uri")
     elif sys.platform == "darwin":
-        return expand(Path.home() / "Library" / "Application Support" / "samsung-find" / "redirect.uri")
+        return expand(Path.home() / "Library" / "Application Support" / "samsung-account" / "redirect.uri")
     else:
-        xdg_state = os.environ.get("XDG_STATE_HOME")
-        base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
-        return expand(base / "samsung-find" / "redirect.uri")
+        xdg_config = os.environ.get("XDG_CONFIG_HOME")
+        base = Path(xdg_config) if xdg_config else Path.home() / ".config"
+        return expand(base / "samsung-account" / "redirect.uri")
 
 
 class MasterStateStore:

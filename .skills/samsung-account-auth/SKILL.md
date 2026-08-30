@@ -1,84 +1,79 @@
 ---
 name: samsung-account-auth
-description: Manage shared Samsung Account authentication safely.
-version: 0.2.0
+description: Bootstrap shared Samsung Account authentication safely.
+version: 0.3.0
 author: Charles Bel, Hermes Agent
 license: MIT
 platforms: [linux]
 metadata:
   hermes:
-    tags: [samsung, authentication, oauth, master-state, smart-home]
+    tags: [samsung, authentication, oauth, master-state, health, smart-home]
 ---
 
-# Samsung Account Shared Authentication
+# Samsung Account Authentication
 
-> **Disclaimer:** Unofficial reverse-engineered authentication tools. Not affiliated with, endorsed by, or supported by Samsung Electronics.
+Use this skill to create or repair the neutral `master-state-v1` shared by `samsung-re-find` and `samsung-re-health`. Either package can perform the complete interactive login independently; choose one installed CLI and use it consistently for the four account commands below.
 
-Use this skill to bootstrap, migrate, or repair the shared Samsung Account master authentication state (`master-state-v1`) used by Samsung Find (`samsung-re-find`) and Samsung Health Cloud (`samsung-re-health`).
+This is an unofficial reverse-engineered flow and is not affiliated with Samsung.
 
-## When to Use
+## When to use
 
-- First-time setup on a new system.
-- Migrating legacy v0.1 `~/.config/samsung-find/state.json` to neutral `master-state-v1`.
-- Repairing revoked or expired credentials.
-- Checking master authentication status across ecosystem tools.
+- First-time online setup.
+- Repairing revoked or expired master credentials.
+- Checking non-secret master-state readiness.
 
 ## Prerequisites
 
-- Access to a web browser on desktop or local machine to complete human Samsung login.
-- `samsung-re-find` CLI installed (legacy alias `samsung-find` also supported).
-- Never output or paste passwords, master tokens, or private state files into chat or logs.
+- Either `samsung-re-find` or `samsung-re-health` installed.
+- A Linux desktop with `xdg-mime` for automatic callback capture. Other platforms currently need an independently configured private handler for the exact `ms-app://` callback.
+- A browser for the user to sign in on Samsung's own page.
 
-## How to Run
-
-### Initial Interactive Setup
-
-```bash
-# 1. Register desktop redirect URI handler
-samsung-re-find install-handler
-
-# 2. Generate secure login URL
-samsung-re-find auth-start --country us --locale en-US
-
-# 3. Open URL in browser, complete login, then:
-samsung-re-find auth-complete
-
-# 4. Verify status
-samsung-re-find status
-samsung-re-find verify
-```
-
-### Migration from Legacy v0.1
-
-```bash
-# Migrate without re-entering credentials
-samsung-re-find migrate-master
-```
-
-## Quick Reference
-
-| Task | Canonical Command | Legacy Alias Command | Purpose |
-|---|---|---|---|
-| Register handler | `samsung-re-find install-handler` | `samsung-find install-handler` | Desktop `ms-app://` handler |
-| Start login | `samsung-re-find auth-start` | `samsung-find auth-start` | Initiates PKCE OAuth flow |
-| Complete login | `samsung-re-find auth-complete` | `samsung-find auth-complete` | Exchanges callback for master state |
-| Migrate legacy | `samsung-re-find migrate-master` | `samsung-find migrate-master` | Converts legacy state to neutral v1 |
-| Check status | `samsung-re-find status` | `samsung-find status` | Shows local token readiness |
-| Verify session | `samsung-re-find verify` | `samsung-find verify` | Tests live SmartThings/Find API connectivity |
+Never ask for or expose a password, second factor, callback URI, token, cookie, or state-file content.
 
 ## Procedure
 
-1. **Check Status First:** Run `samsung-re-find status`. If authenticated, re-login is not needed.
-2. **If Legacy State Exists:** Run `samsung-re-find migrate-master` to create `master-state-v1` non-destructively.
-3. **Interactive Login:** If unauthenticated, run `auth-start`, guide the user to sign in via their browser, and run `auth-complete`.
-4. **Verification:** Run `samsung-re-find verify` to test full connectivity.
+The command names are identical. Replace `<cli>` with either `samsung-re-find` or `samsung-re-health`:
+
+```bash
+<cli> install-handler
+<cli> auth-start --country us --locale en-US
+# Open the login_url from the JSON response and complete the Samsung-hosted login.
+<cli> auth-complete
+<cli> account-status
+```
+
+`auth-start` creates private PKCE state that expires after 15 minutes. `auth-complete` consumes the captured callback and creates the shared master state. `account-status` reports only booleans and the schema version, never credential values.
+
+After account setup, initialize the selected service:
+
+```bash
+samsung-re-find status
+# or
+samsung-re-health init
+samsung-re-health status
+```
+
+## Shared-state contract
+
+- Persistent master: `samsung-account/master.json`.
+- Transient login state: `samsung-account/pending.json`.
+- One-shot callback: `samsung-account/redirect.uri`.
+- All three resolve under the same platform account directory, or beside a custom master path.
+- Find and Health keep service-specific tokens and data in separate state directories.
+- Health bootstrap does not request or store Find or IoT tokens.
+
+The master is JSON protected by private filesystem permissions; it is not encrypted at rest. Anyone able to read it may be able to reuse the Samsung session.
 
 ## Pitfalls
 
-- **No Chat Credentials:** Never ask users to paste passwords, 2FA codes, or tokens in conversation.
-- **Do Not Delete Legacy:** Migration leaves legacy state intact for safety and rollback.
-- **Single Master State:** `samsung-re-find` and `samsung-re-health` both consume `samsung-account/master.json`. Logging in once powers both tools.
+- If the pending state expires, restart with `auth-start`.
+- Do not paste the login URL or callback into chat, shell history, logs, issues, or CI output.
+- Do not copy the master or transient files into a service-specific state directory.
+- Installing either callback handler is sufficient because both write the same neutral callback path; the CLI used for `auth-complete` must resolve the same master path.
+- Account readiness does not prove that Find devices or Health documents are available for the account.
 
 ## Verification
 
-Run `samsung-re-find verify`. A valid response reports `persistent_master_token_present: true` and `web_session_valid: true`.
+- `account-status` succeeds and returns only `authenticated`, `device_id_present`, `user_id_present`, and `schema_version`.
+- The account directory is private and contains no service-specific Find or Health state.
+- Run the selected service's own status or initialization command separately; do not infer service availability from master readiness.

@@ -62,7 +62,7 @@ class SamsungAuth:
     ):
         self.state_path = resolve_find_state_path(state_path)
         self.legacy_state_path = resolve_legacy_find_state_path(legacy_state_path or state_path)
-        self.pending_path = resolve_pending_path(pending_path)
+        self.pending_path = resolve_pending_path(pending_path, master_path)
         self.master_store = MasterStateStore(
             master_path=master_path,
             canonical_state_path=self.state_path,
@@ -246,17 +246,24 @@ class SamsungAuth:
         Path(self.pending_path).expanduser().unlink(missing_ok=True)
         return self.public_status()
 
-    def public_status(self) -> dict[str, Any]:
+    def account_status(self) -> dict[str, bool | int]:
+        """Return non-secret readiness for the neutral shared master only."""
         master = self.master_store.load(allow_legacy_fallback=True)
+        return {
+            "authenticated": bool(master and master.identity.userauth_token),
+            "user_id_present": bool(master and master.account.user_id),
+            "device_id_present": bool(master and master.installation.physical_address),
+            "schema_version": 1,
+        }
+
+    def public_status(self) -> dict[str, Any]:
+        status = self.account_status()
         derived = self._load_state_safe()
         if not derived and not self.state_path.exists() and self.legacy_state_path.exists():
             derived = self._load_legacy_safe()
 
-        has_master = bool(master and master.identity.userauth_token)
         return {
-            "authenticated": has_master,
-            "user_id_present": bool(master and master.account.user_id),
-            "device_id_present": bool(master and master.installation.physical_address),
+            **status,
             "find_token_present": bool((derived.get("find") or {}).get("access_token")),
             "iot_token_present": bool((derived.get("iot") or {}).get("access_token")),
         }

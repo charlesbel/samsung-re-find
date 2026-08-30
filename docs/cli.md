@@ -55,6 +55,7 @@ Stdout contains a v1 success or error envelope:
 samsung-re-find install-handler
 samsung-re-find auth-start [--country CODE] [--locale LOCALE]
 samsung-re-find auth-complete
+samsung-re-find account-status
 samsung-re-find status
 samsung-re-find verify
 ```
@@ -62,7 +63,8 @@ samsung-re-find verify
 - `install-handler` registers the private desktop callback catcher where supported.
 - `auth-start` creates pending PKCE state and returns the Samsung login URL.
 - `auth-complete` consumes the private captured redirect and deletes the callback artifact.
-- `status` is a local readiness check.
+- `account-status` reports only non-secret shared master-state readiness.
+- `status` also reports Find-derived token readiness.
 - `verify` performs live connectivity/session verification and may renew derived state.
 
 Passwords and second factors are entered only on Samsung’s sign-in page. Callback URIs, state files, tokens, and cookies are secrets and must never enter chat, shell history, logs, or issues.

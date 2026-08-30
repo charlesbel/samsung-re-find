@@ -344,10 +344,14 @@ def main(argv: list[str] | None = None) -> int:
         for tool_name, tool_info in server._tools.items():
             desc = tool_info["description"]
             is_effect = bool(tool_info["is_effect"])
+            is_active_request = tool_name in {
+                "samsung_find_request_location",
+                "samsung_find_check_connection",
+            }
             annotations = ToolAnnotations(
-                readOnlyHint=not is_effect,
+                readOnlyHint=not is_effect and not is_active_request,
                 destructiveHint=False,
-                idempotentHint=not is_effect,
+                idempotentHint=not is_effect and not is_active_request,
                 openWorldHint=True,
             )
 

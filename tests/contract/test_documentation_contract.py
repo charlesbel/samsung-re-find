@@ -11,6 +11,7 @@ def test_public_documentation_covers_every_cli_command_and_sensitive_option() ->
         "install-handler",
         "auth-start",
         "auth-complete",
+        "account-status",
         "migrate-master",
         "status",
         "verify",
@@ -44,3 +45,8 @@ def test_readme_uses_current_identity_and_avoids_release_overclaims() -> None:
     assert "production-ready" not in readme
     assert "official OAuth" not in readme
     assert "Battery: {status.battery}%" not in readme
+    assert "not a complete list of operations supported by Samsung's servers" in readme
+    assert "Pull requests are welcome" in readme
+    assert "It does not imply that other Samsung operations do not exist" in readme
+    assert "samsung-re-health" in readme
+    assert "primary interactive login provider" not in readme

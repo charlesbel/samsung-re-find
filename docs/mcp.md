@@ -13,7 +13,7 @@ pip install 'samsung-re-find[mcp]'
 ## Running the Server
 
 ```bash
-# Default: read-only tools only (canonical: samsung-re-find-mcp; legacy alias: samsung-find-mcp)
+# Default tools; active checks are included, audible/persistent effects are not
 samsung-re-find-mcp
 
 # With explicit side-effects enabled
@@ -22,7 +22,7 @@ samsung-re-find-mcp --allow-effects ring,tracking
 
 ## Exposed MCP Tools
 
-### Read-Only Tools (Enabled by Default)
+### Tools enabled by default
 
 1. `samsung_find_status`
    - Description: Check local authentication status and master state validity.
@@ -41,11 +41,11 @@ samsung-re-find-mcp --allow-effects ring,tracking
    - Parameters: `query` (string, required)
 
 5. `samsung_find_request_location`
-   - Description: Request an active GPS location refresh from device and wait for fix.
+   - Description: Request an active GPS location refresh from the device and wait for a fix. This can wake the device or consume battery; its MCP annotations are not read-only or idempotent.
    - Parameters: `query` (string, required), `poll_seconds` (integer, default 180)
 
 6. `samsung_find_check_connection`
-   - Description: Ping device for reachability and battery percentage.
+   - Description: Ping the device for reachability and battery percentage. This is an active request and is not annotated as read-only or idempotent.
    - Parameters: `query` (string, required), `poll_seconds` (integer, default 40)
 
 ### Side-Effect Tools (Gated / Disabled by Default)

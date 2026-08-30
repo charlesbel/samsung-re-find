@@ -13,6 +13,8 @@ from samsung_find.credentials import (
     MasterState,
     MasterStateStore,
     resolve_master_state_path,
+    resolve_pending_path,
+    resolve_redirect_path,
 )
 from samsung_find.exceptions import AuthError, SecurityError
 
@@ -219,6 +221,44 @@ def test_master_state_path_resolution(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     resolved = resolve_master_state_path()
     assert resolved == (tmp_path / "config" / "samsung-account" / "master.json")
+
+
+def test_account_login_transient_paths_are_neutral(tmp_path, monkeypatch):
+    monkeypatch.setattr(credentials_module.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.delenv("SAMSUNG_ACCOUNT_PENDING_PATH", raising=False)
+    monkeypatch.delenv("SAMSUNG_ACCOUNT_PENDING", raising=False)
+    monkeypatch.delenv("SAMSUNG_FIND_PENDING", raising=False)
+    monkeypatch.delenv("SAMSUNG_ACCOUNT_REDIRECT_PATH", raising=False)
+    monkeypatch.delenv("SAMSUNG_FIND_REDIRECT_PATH", raising=False)
+
+    assert resolve_pending_path() == tmp_path / "config" / "samsung-account" / "pending.json"
+    assert resolve_redirect_path() == tmp_path / "config" / "samsung-account" / "redirect.uri"
+
+
+def test_account_login_neutral_environment_overrides_legacy_find_names(tmp_path, monkeypatch):
+    neutral_pending = tmp_path / "neutral-pending.json"
+    neutral_redirect = tmp_path / "neutral-redirect.uri"
+    monkeypatch.setenv("SAMSUNG_ACCOUNT_PENDING_PATH", str(neutral_pending))
+    monkeypatch.setenv("SAMSUNG_ACCOUNT_PENDING", str(tmp_path / "older-neutral-pending.json"))
+    monkeypatch.setenv("SAMSUNG_FIND_PENDING", str(tmp_path / "legacy-pending.json"))
+    monkeypatch.setenv("SAMSUNG_ACCOUNT_REDIRECT_PATH", str(neutral_redirect))
+    monkeypatch.setenv("SAMSUNG_FIND_REDIRECT_PATH", str(tmp_path / "legacy-redirect.uri"))
+
+    assert resolve_pending_path() == neutral_pending
+    assert resolve_redirect_path() == neutral_redirect
+
+
+def test_custom_master_path_places_transient_files_beside_master(tmp_path, monkeypatch):
+    monkeypatch.delenv("SAMSUNG_ACCOUNT_PENDING_PATH", raising=False)
+    monkeypatch.delenv("SAMSUNG_ACCOUNT_PENDING", raising=False)
+    monkeypatch.delenv("SAMSUNG_FIND_PENDING", raising=False)
+    monkeypatch.delenv("SAMSUNG_ACCOUNT_REDIRECT_PATH", raising=False)
+    monkeypatch.delenv("SAMSUNG_FIND_REDIRECT_PATH", raising=False)
+    master = tmp_path / "custom-account" / "master.json"
+
+    assert resolve_pending_path(master_path=master) == master.parent / "pending.json"
+    assert resolve_redirect_path(master_path=master) == master.parent / "redirect.uri"
 
 
 def test_legacy_fallback_loading(tmp_path):

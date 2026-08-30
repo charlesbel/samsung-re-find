@@ -164,6 +164,28 @@ class SyntheticMockAuth:
             "iot_token_present": True,
         }
 
+    def account_status(self) -> dict[str, bool | int]:
+        return {
+            "authenticated": True,
+            "user_id_present": True,
+            "device_id_present": True,
+            "schema_version": 1,
+        }
+
+
+def test_cli_account_status_reports_only_shared_master_readiness(capsys, envelope_schema):
+    ret = main(["account-status"], auth=SyntheticMockAuth())  # type: ignore[arg-type]
+    assert ret == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    jsonschema.Draft202012Validator(envelope_schema).validate(payload)
+    assert payload["data"] == {
+        "authenticated": True,
+        "user_id_present": True,
+        "device_id_present": True,
+        "schema_version": 1,
+    }
+
 
 def test_success_envelope_schema_validation(envelope_schema):
     payload = serialize_response(

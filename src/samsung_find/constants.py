@@ -13,8 +13,8 @@ SMARTTHINGS_USER_AGENT = (
     f"Android/OneApp/{SMARTTHINGS_APP_VERSION}/Main (Google Pixel 8 Pro; Android 14/14) SmartKit/4.423.1"
 )
 DEFAULT_STATE_PATH = "~/.config/samsung-find/state.json"
-DEFAULT_PENDING_PATH = "~/.config/samsung-find/pending.json"
-DEFAULT_REDIRECT_PATH = "~/.config/samsung-find/redirect.uri"
+DEFAULT_PENDING_PATH = "~/.config/samsung-account/pending.json"
+DEFAULT_REDIRECT_PATH = "~/.config/samsung-account/redirect.uri"
 DEFAULT_COUNTRY = "US"
 DEFAULT_LANGUAGE = "en"
 DEFAULT_TIMEZONE = "UTC"

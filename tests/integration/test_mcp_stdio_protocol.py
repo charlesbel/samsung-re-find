@@ -139,12 +139,16 @@ def test_official_mcp_stdio_negotiation_and_tool_contracts(tmp_path):
         assert listed["id"] == 2
         tools = {tool["name"]: tool for tool in listed["result"]["tools"]}
         assert tools
-        for tool in tools.values():
+        for name, tool in tools.items():
             assert tool["inputSchema"]["additionalProperties"] is False
+            active = name in {
+                "samsung_find_request_location",
+                "samsung_find_check_connection",
+            }
             assert tool["annotations"] == {
-                "readOnlyHint": True,
+                "readOnlyHint": not active,
                 "destructiveHint": False,
-                "idempotentHint": True,
+                "idempotentHint": not active,
                 "openWorldHint": True,
             }
         assert tools["samsung_find_list_devices"]["inputSchema"]["properties"]["include_ids"]["type"] == "boolean"

@@ -63,6 +63,7 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("--country", default="us")
     start.add_argument("--locale", default="en-US")
     commands.add_parser("auth-complete", help="Consume the securely captured redirect URI")
+    commands.add_parser("account-status", help="Check the shared Samsung Account master state")
     migrate = commands.add_parser("migrate-master", help="Migrate legacy state to neutral master state v1")
     migrate.add_argument("--from-state", default=None, help="Legacy state path (defaults to legacy standard path)")
     migrate.add_argument("--force", action="store_true", help="Force overwrite existing master state")
@@ -93,22 +94,25 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
-def install_handler(redirect_path: str | Path | None = None) -> dict[str, object]:
-    target_redirect = resolve_redirect_path(redirect_path)
+def install_handler(
+    redirect_path: str | Path | None = None,
+    master_path: str | Path | None = None,
+) -> dict[str, object]:
+    target_redirect = resolve_redirect_path(redirect_path, master_path)
     applications = Path("~/.local/share/applications").expanduser()
     applications.mkdir(parents=True, exist_ok=True)
-    desktop = applications / "samsung-find-callback.desktop"
+    desktop = applications / "samsung-account-callback.desktop"
     import shlex
 
     env_path = str(target_redirect)
     exec_line = (
-        f"env SAMSUNG_FIND_REDIRECT_PATH={shlex.quote(env_path)} "
+        f"env SAMSUNG_ACCOUNT_REDIRECT_PATH={shlex.quote(env_path)} "
         f"{shlex.quote(sys.executable)} -m samsung_find.capture_redirect %u"
     )
     desktop.write_text(
         "[Desktop Entry]\n"
         "Type=Application\n"
-        "Name=Samsung Find private callback\n"
+        "Name=Samsung Account private callback\n"
         f"Exec={exec_line}\n"
         "Terminal=false\n"
         "NoDisplay=true\n"
@@ -154,7 +158,7 @@ def main(
 
     try:
         if args.command == "install-handler":
-            emit(install_handler(args.redirect_file), legacy_json=legacy)
+            emit(install_handler(args.redirect_file, args.master_state), legacy_json=legacy)
         elif args.command == "auth-start":
             if auth_instance is None:
                 auth_instance = SamsungAuth(
@@ -172,7 +176,7 @@ def main(
                     master_path=args.master_state,
                     legacy_state_path=args.legacy_state,
                 )
-            redirect_target = resolve_redirect_path(args.redirect_file)
+            redirect_target = resolve_redirect_path(args.redirect_file, args.master_state)
             redirect = secure_read_text(redirect_target)
             emit(auth_instance.complete(redirect), legacy_json=legacy)
         elif args.command == "migrate-master":
@@ -182,7 +186,7 @@ def main(
                 legacy_path=args.from_state or args.legacy_state,
             )
             emit(store.migrate_legacy(force=args.force), legacy_json=legacy)
-        elif args.command == "status":
+        elif args.command in {"account-status", "status"}:
             if auth_instance is None:
                 auth_instance = SamsungAuth(
                     state_path=args.state,
@@ -190,7 +194,11 @@ def main(
                     master_path=args.master_state,
                     legacy_state_path=args.legacy_state,
                 )
-            emit(auth_instance.public_status(), legacy_json=legacy)
+            if args.command == "account-status":
+                status = auth_instance.account_status()
+            else:
+                status = auth_instance.public_status()
+            emit(status, legacy_json=legacy)
         else:
             if svc is None:
                 if auth_instance is None:

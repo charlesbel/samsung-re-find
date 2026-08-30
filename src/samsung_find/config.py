@@ -42,8 +42,8 @@ class FindConfig:
         master_path = resolve_master_state_path(self.master_state_path)
         state_p = resolve_find_state_path(self.state_path)
         legacy_p = resolve_legacy_find_state_path(self.legacy_state_path)
-        pending_p = resolve_pending_path(self.pending_path)
-        redirect_p = resolve_redirect_path(self.redirect_path)
+        pending_p = resolve_pending_path(self.pending_path, master_path)
+        redirect_p = resolve_redirect_path(self.redirect_path, master_path)
 
         object.__setattr__(self, "country", country)
         object.__setattr__(self, "language", language)
