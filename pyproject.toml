@@ -3,22 +3,27 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "samsung-find-agent"
-version = "0.1.0"
-description = "Persistent Samsung SmartThings Find client and AI-agent skills"
+name = "samsung-find"
+version = "0.2.0"
+description = "Persistent Samsung Find SDK, JSON CLI, and MCP server for Samsung SmartThings Find"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-authors = [{name = "Hermes Agent"}]
-keywords = ["samsung", "smartthings-find", "ai-agent", "device-location", "automation"]
+authors = [
+  {name = "Charles Bel"},
+  {name = "Hermes Agent"},
+]
+keywords = ["samsung", "smartthings-find", "device-location", "sdk", "cli", "mcp", "automation"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Home Automation",
+  "Typing :: Typed",
 ]
 dependencies = [
   "cryptography>=42",
@@ -43,9 +48,10 @@ samsung-find = "samsung_find.cli:main"
 samsung-find-mcp = "samsung_find.mcp_server:main"
 
 [project.urls]
-Homepage = "https://github.com/charlesbel/samsung-find-agent"
-Repository = "https://github.com/charlesbel/samsung-find-agent"
-Issues = "https://github.com/charlesbel/samsung-find-agent/issues"
+Homepage = "https://github.com/charlesbel/samsung-find"
+Repository = "https://github.com/charlesbel/samsung-find"
+Issues = "https://github.com/charlesbel/samsung-find/issues"
+Documentation = "https://github.com/charlesbel/samsung-find#readme"
 
 [tool.pytest.ini_options]
 addopts = "-q"
@@ -60,3 +66,6 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"samsung_find" = ["py.typed"]

@@ -1,24 +1,32 @@
-# Contributing
+# Contributing to Samsung Find
 
-Contributions are welcome, especially protocol updates, device-type fixtures, documentation corrections, and tests that do not require a live Samsung account.
+Thank you for contributing to `samsung-find`!
 
-## Development setup
+## Local Development Workflow
 
 ```bash
+# Create local virtual environment
 python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/ruff check .
-.venv/bin/pytest
-.venv/bin/python -m build
+source .venv/bin/activate
+
+# Install editable with dev and mcp dependencies
+pip install -e '.[dev,mcp]'
+
+# Run linters and formatters
+ruff check .
+ruff format --check .
+
+# Run test suite
+pytest
+
+# Build package
+python -m build
+twine check dist/*
 ```
 
-## Rules for fixtures and logs
+## Security & Fixture Rules
 
-- Never commit real tokens, cookies, OAuth redirects, account IDs, device IDs, device names, email addresses, coordinates, street addresses, or raw Samsung responses from a personal account.
-- Reduce protocol fixtures to the smallest synthetic structure needed by a test.
-- Keep destructive remote operations out of the generic execution surface.
-- Mark live-tested behavior separately from inferred or untested behavior.
-
-## Pull requests
-
-Describe which device class and endpoint were tested, whether a live account was used, and what was anonymized. Include automated tests for new parsing, polling, authentication, or operation logic.
+1. **Synthetic Data Only:** Never commit real tokens, `userauth_token` values, session cookies, OAuth callbacks, physical MAC addresses, personal email addresses, or real GPS coordinates.
+2. **Deterministic & Offline Tests:** All unit and contract tests must run completely offline without relying on real Samsung network services.
+3. **No Destructive Operations:** Do not introduce endpoints or CLI flags for destructive device operations (e.g. device lock, wipe, payment block).
+4. **Code Style:** All Python code must pass `ruff check .` and `ruff format --check .`.
