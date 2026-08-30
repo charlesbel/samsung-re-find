@@ -588,23 +588,28 @@ class MasterStateStore:
             if not auth_server_raw or not isinstance(auth_server_raw, str):
                 raise AuthError("Legacy state is missing required auth_server_url")
 
-            auth_server = validate_auth_server_url(auth_server_raw)
-            user_id = str(legacy_data.get("user_id")) if legacy_data.get("user_id") else None
+            candidate_auth_server = validate_auth_server_url(auth_server_raw)
+            candidate_user_id = str(legacy_data.get("user_id")) if legacy_data.get("user_id") else None
+            candidate_login_id = login_id.strip()
+            candidate_device_id = device_id.strip()
+            candidate_userauth = userauth.strip()
+            candidate_created_at = float(legacy_data.get("created_at", time.time()))
 
-            gen = str(uuid.uuid4())
-            now = time.time()
-            candidate_master = MasterState(
-                schema=MASTER_SCHEMA_ID,
-                schema_version=MASTER_SCHEMA_VERSION,
-                generation=gen,
-                created_at=float(legacy_data.get("created_at", now)),
-                updated_at=now,
-                account=MasterAccount(login_id=login_id.strip(), user_id=user_id),
-                installation=MasterInstallation(physical_address=device_id.strip()),
-                identity=MasterIdentity(auth_server_url=auth_server, userauth_token=userauth.strip()),
+            legacy_find = (
+                {k: v for k, v in legacy_data["find"].items() if k in ALLOWED_FIND_IOT_KEYS}
+                if isinstance(legacy_data.get("find"), dict)
+                else None
             )
-
-            candidate_derived = project_legacy_derived(legacy_data, master_generation=gen)
+            legacy_iot = (
+                {k: v for k, v in legacy_data["iot"].items() if k in ALLOWED_FIND_IOT_KEYS}
+                if isinstance(legacy_data.get("iot"), dict)
+                else None
+            )
+            legacy_web = (
+                {k: v for k, v in legacy_data["web"].items() if k in ALLOWED_WEB_KEYS}
+                if isinstance(legacy_data.get("web"), dict)
+                else None
+            )
 
             master_exists = self.master_path.exists()
             derived_exists = self.canonical_state_path.exists()
@@ -618,36 +623,90 @@ class MasterStateStore:
 
             master_matches = bool(
                 existing_master
-                and existing_master.account.login_id == candidate_master.account.login_id
-                and existing_master.identity.userauth_token == candidate_master.identity.userauth_token
+                and existing_master.account.login_id == candidate_login_id
+                and existing_master.identity.userauth_token == candidate_userauth
+                and existing_master.identity.auth_server_url == candidate_auth_server
+                and existing_master.installation.physical_address == candidate_device_id
             )
 
             existing_derived: dict[str, Any] | None = None
+            derived_valid = False
             if derived_exists:
                 try:
                     existing_derived = read_json(self.canonical_state_path, required=False)
+                    validate_derived_state(existing_derived)
+                    derived_valid = True
                 except Exception:
                     existing_derived = None
+                    derived_valid = False
 
-            derived_matches = bool(
-                existing_derived
-                and existing_derived.get("find") == candidate_derived.get("find")
-                and existing_derived.get("iot") == candidate_derived.get("iot")
+            existing_find = existing_derived.get("find") if existing_derived else None
+            existing_iot = existing_derived.get("iot") if existing_derived else None
+            existing_web = existing_derived.get("web") if existing_derived else None
+
+            derived_payload_matches = bool(
+                derived_valid
+                and (existing_find == legacy_find if legacy_find else existing_find is None)
+                and (existing_iot == legacy_iot if legacy_iot else existing_iot is None)
+                and (existing_web == legacy_web if legacy_web else existing_web is None)
             )
 
             if master_exists and not master_matches and not force:
                 raise AuthError("Target master state already exists with conflicting data. Use --force to overwrite.")
 
-            if derived_exists and not derived_matches and not force:
+            if derived_exists and not derived_payload_matches and not force:
                 raise AuthError("Target derived state already exists with conflicting data. Use --force to overwrite.")
 
-            if master_exists and derived_exists and master_matches and derived_matches and not force:
-                return {
-                    "migrated": False,
-                    "source_kind": "legacy_samsung_find",
-                    "target_kind": "master_state_v1",
-                    "schema_version": MASTER_SCHEMA_VERSION,
-                }
+            need_write_master = False
+            need_write_derived = False
+
+            if master_exists and master_matches and not force:
+                final_generation = existing_master.generation
+                if not derived_exists:
+                    need_write_derived = True
+                else:
+                    derived_gen = existing_derived.get("master_generation") if existing_derived else None
+                    if derived_valid and derived_gen == existing_master.generation:
+                        # True idempotent no-op: both targets match and have coherent generation
+                        return {
+                            "migrated": False,
+                            "source_kind": "legacy_samsung_find",
+                            "target_kind": "master_state_v1",
+                            "schema_version": MASTER_SCHEMA_VERSION,
+                        }
+                    else:
+                        # Repair derived generation to match existing master generation
+                        need_write_derived = True
+            elif derived_exists and derived_payload_matches and derived_valid and not master_exists and not force:
+                derived_gen = str(existing_derived.get("master_generation", "")).strip() if existing_derived else ""
+                if derived_gen:
+                    final_generation = derived_gen
+                    need_write_master = True
+                    need_write_derived = False
+                else:
+                    final_generation = str(uuid.uuid4())
+                    need_write_master = True
+                    need_write_derived = True
+            else:
+                final_generation = str(uuid.uuid4())
+                need_write_master = True
+                need_write_derived = True
+
+            now = time.time()
+            if need_write_master:
+                candidate_master = MasterState(
+                    schema=MASTER_SCHEMA_ID,
+                    schema_version=MASTER_SCHEMA_VERSION,
+                    generation=final_generation,
+                    created_at=candidate_created_at,
+                    updated_at=now,
+                    account=MasterAccount(login_id=candidate_login_id, user_id=candidate_user_id),
+                    installation=MasterInstallation(physical_address=candidate_device_id),
+                    identity=MasterIdentity(auth_server_url=candidate_auth_server, userauth_token=candidate_userauth),
+                )
+
+            if need_write_derived:
+                candidate_derived = project_legacy_derived(legacy_data, master_generation=final_generation)
 
             # Capture in-memory snapshots for complete rollback
             old_master_content: str | None = None
@@ -663,30 +722,31 @@ class MasterStateStore:
                 old_derived_mode = stat.S_IMODE(self.canonical_state_path.stat().st_mode)
 
             def _rollback_targets() -> None:
-                if old_master_content is not None:
-                    with contextlib.suppress(Exception):
-                        atomic_write_text(self.master_path, old_master_content, mode=old_master_mode or 0o600)
-                else:
-                    self.master_path.unlink(missing_ok=True)
+                if need_write_master:
+                    if old_master_content is not None:
+                        with contextlib.suppress(Exception):
+                            atomic_write_text(self.master_path, old_master_content, mode=old_master_mode or 0o600)
+                    else:
+                        self.master_path.unlink(missing_ok=True)
 
-                if old_derived_content is not None:
-                    with contextlib.suppress(Exception):
-                        atomic_write_text(
-                            self.canonical_state_path,
-                            old_derived_content,
-                            mode=old_derived_mode or 0o600,
-                        )
-                else:
-                    self.canonical_state_path.unlink(missing_ok=True)
+                if need_write_derived:
+                    if old_derived_content is not None:
+                        with contextlib.suppress(Exception):
+                            atomic_write_text(
+                                self.canonical_state_path,
+                                old_derived_content,
+                                mode=old_derived_mode or 0o600,
+                            )
+                    else:
+                        self.canonical_state_path.unlink(missing_ok=True)
 
             try:
-                # 1. Write master state if missing or forced or repairing
-                atomic_write_json(self.master_path, candidate_master.to_dict())
+                if need_write_master:
+                    atomic_write_json(self.master_path, candidate_master.to_dict())
 
-                # 2. Write clean derived state
-                self._atomic_write_derived(self.canonical_state_path, candidate_derived)
+                if need_write_derived:
+                    self._atomic_write_derived(self.canonical_state_path, candidate_derived)
 
-                # 3. Verify legacy state was NOT modified (runtime check, never assert!)
                 post_legacy_content = secure_read_raw_text(self.legacy_path, consume=False)
                 if post_legacy_content != legacy_content:
                     _rollback_targets()

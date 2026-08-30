@@ -18,7 +18,7 @@ from samsung_find.credentials import (
     resolve_master_state_path,
     validate_derived_state,
 )
-from samsung_find.exceptions import SecurityError
+from samsung_find.exceptions import AuthError, SecurityError
 from samsung_find.storage import secure_read_raw_text
 
 
@@ -204,7 +204,7 @@ def test_migration_creates_master_and_clean_derived_without_mutating_legacy(tmp_
         assert forbidden not in derived_data
 
 
-def test_migration_repair_matching_master_missing_derived(tmp_path):
+def test_migration_repair_matching_master_missing_derived_preserves_master_bytes(tmp_path):
     legacy_file = tmp_path / "legacy.json"
     legacy_file.write_text(
         json.dumps(
@@ -229,25 +229,31 @@ def test_migration_repair_matching_master_missing_derived(tmp_path):
         canonical_state_path=derived_file,
         legacy_path=legacy_file,
     )
-    # Pre-save master file matching candidate
-    store.save(
+    saved_master = store.save(
         login_id="user1@example.invalid",
         physical_address="dev-1",
         auth_server_url="https://auth.samsungosp.com",
         userauth_token="token-1",
     )
+    original_master_bytes = master_file.read_bytes()
+    original_master_mtime = master_file.stat().st_mtime_ns
+
     assert master_file.exists()
     assert not derived_file.exists()
 
-    # Migration repairs missing derived
+    # Migration writes derived using existing master generation, and preserves master bytes
     res = store.migrate_legacy()
     assert res["migrated"] is True
     assert derived_file.exists()
+    assert master_file.read_bytes() == original_master_bytes
+    assert master_file.stat().st_mtime_ns == original_master_mtime
+
     derived_data = json.loads(derived_file.read_text(encoding="utf-8"))
+    assert derived_data["master_generation"] == saved_master.generation
     assert derived_data["find"]["access_token"] == "f1"
 
 
-def test_migration_repair_matching_derived_missing_master(tmp_path):
+def test_migration_generation_coherence_repairs_derived_without_rewriting_master(tmp_path):
     legacy_file = tmp_path / "legacy.json"
     legacy_file.write_text(
         json.dumps(
@@ -272,21 +278,134 @@ def test_migration_repair_matching_derived_missing_master(tmp_path):
         canonical_state_path=derived_file,
         legacy_path=legacy_file,
     )
-    # Pre-write derived state matching candidate
+    saved_master = store.save(
+        login_id="user1@example.invalid",
+        physical_address="dev-1",
+        auth_server_url="https://auth.samsungosp.com",
+        userauth_token="token-1",
+    )
+    original_master_bytes = master_file.read_bytes()
+
+    # Pre-write derived state matching payload but with DIFFERENT generation
+    derived_file.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "master_generation": "different-incoherent-gen",
+                "find": {"access_token": "f1"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    derived_file.chmod(0o600)
+
+    res = store.migrate_legacy()
+    assert res["migrated"] is True
+
+    # Master bytes must NOT have been rewritten
+    assert master_file.read_bytes() == original_master_bytes
+
+    # Derived state must have been repaired to match master generation
+    derived_data = json.loads(derived_file.read_text(encoding="utf-8"))
+    assert derived_data["master_generation"] == saved_master.generation
+    assert derived_data["find"]["access_token"] == "f1"
+
+
+def test_migration_preserves_derived_bytes_when_master_missing_with_valid_gen(tmp_path):
+    legacy_file = tmp_path / "legacy.json"
+    legacy_file.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "device_id": "dev-1",
+                "auth_server_url": "https://auth.samsungosp.com",
+                "login_id": "user1@example.invalid",
+                "userauth_token": "token-1",
+                "find": {"access_token": "f1"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    legacy_file.chmod(0o600)
+
+    master_file = tmp_path / "master.json"
+    derived_file = tmp_path / "state.json"
+
+    store = MasterStateStore(
+        master_path=master_file,
+        canonical_state_path=derived_file,
+        legacy_path=legacy_file,
+    )
+    derived_content = (
+        json.dumps(
+            {
+                "schema": 1,
+                "master_generation": "valid-derived-gen-12345",
+                "find": {"access_token": "f1"},
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    derived_file.write_text(derived_content, encoding="utf-8")
+    derived_file.chmod(0o600)
+    original_derived_mtime = derived_file.stat().st_mtime_ns
+
+    assert not master_file.exists()
+
+    res = store.migrate_legacy()
+    assert res["migrated"] is True
+    assert master_file.exists()
+
+    # Derived bytes and mtime must be preserved unchanged
+    assert derived_file.read_text(encoding="utf-8") == derived_content
+    assert derived_file.stat().st_mtime_ns == original_derived_mtime
+
+    master_state = store.load(allow_legacy_fallback=False)
+    assert master_state.generation == "valid-derived-gen-12345"
+
+
+def test_migration_repairs_both_when_master_missing_and_derived_has_no_generation(tmp_path):
+    legacy_file = tmp_path / "legacy.json"
+    legacy_file.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "device_id": "dev-1",
+                "auth_server_url": "https://auth.samsungosp.com",
+                "login_id": "user1@example.invalid",
+                "userauth_token": "token-1",
+                "find": {"access_token": "f1"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    legacy_file.chmod(0o600)
+
+    master_file = tmp_path / "master.json"
+    derived_file = tmp_path / "state.json"
+
+    store = MasterStateStore(
+        master_path=master_file,
+        canonical_state_path=derived_file,
+        legacy_path=legacy_file,
+    )
     derived_file.write_text(
         json.dumps({"schema": 1, "find": {"access_token": "f1"}}),
         encoding="utf-8",
     )
     derived_file.chmod(0o600)
-    assert not master_file.exists()
 
-    # Migration repairs missing master
     res = store.migrate_legacy()
     assert res["migrated"] is True
     assert master_file.exists()
 
+    master_state = store.load(allow_legacy_fallback=False)
+    derived_data = json.loads(derived_file.read_text(encoding="utf-8"))
+    assert master_state.generation == derived_data["master_generation"]
 
-def test_migration_both_matching_is_idempotent_noop(tmp_path):
+
+def test_migration_both_matching_and_coherent_is_idempotent_noop_preserving_bytes_and_mtimes(tmp_path):
     legacy_file = tmp_path / "legacy.json"
     legacy_file.write_text(
         json.dumps(
@@ -315,9 +434,19 @@ def test_migration_both_matching_is_idempotent_noop(tmp_path):
     first = store.migrate_legacy()
     assert first["migrated"] is True
 
-    # Second migration with both existing and matching => no-op
+    master_bytes = master_file.read_bytes()
+    master_mtime = master_file.stat().st_mtime_ns
+    derived_bytes = derived_file.read_bytes()
+    derived_mtime = derived_file.stat().st_mtime_ns
+
+    # Second migration with both existing and coherent => no-op
     second = store.migrate_legacy()
     assert second["migrated"] is False
+
+    assert master_file.read_bytes() == master_bytes
+    assert master_file.stat().st_mtime_ns == master_mtime
+    assert derived_file.read_bytes() == derived_bytes
+    assert derived_file.stat().st_mtime_ns == derived_mtime
 
 
 def test_migration_force_overwrite_and_injected_second_write_failure_rollback(tmp_path, monkeypatch):
@@ -416,6 +545,54 @@ def test_auth_state_legacy_fallback_never_exposes_master_fields(tmp_path):
     for forbidden in ["userauth_token", "login_id", "user_id", "physical_address", "device_id", "auth_server_url"]:
         assert forbidden not in fallback_state
     assert fallback_state["find"]["access_token"] == "f1_token"
+
+
+def test_verify_find_token_fails_closed_without_http_if_user_id_or_auth_server_missing(tmp_path):
+    derived_file = tmp_path / "state.json"
+    derived_file.write_text(
+        json.dumps({"schema": 1, "find": {"access_token": "valid_token", "expires_at": time.time() + 3600}}),
+        encoding="utf-8",
+    )
+    derived_file.chmod(0o600)
+    master_file = tmp_path / "master.json"
+    legacy_file = tmp_path / "nonexistent_legacy.json"
+
+    auth = SamsungAuth(
+        state_path=derived_file,
+        master_path=master_file,
+        legacy_state_path=legacy_file,
+    )
+    client = SamsungFindClient(auth)
+    client.http = MagicMock()
+
+    # 1. Master file does not exist -> master summary has None for auth_server_url and user_id
+    with pytest.raises(AuthError) as exc_info:
+        client.verify_find_token()
+
+    assert "missing auth_server_url or user_id" in str(exc_info.value)
+    client.http.get.assert_not_called()
+
+    # 2. Master exists but user_id is None
+    master_file.write_text(
+        json.dumps(
+            {
+                "schema": "io.github.charlesbel.samsung-account.master",
+                "schema_version": 1,
+                "generation": "gen-1",
+                "created_at": 100.0,
+                "updated_at": 100.0,
+                "account": {"login_id": "user@example.invalid"},
+                "installation": {"physical_address": "dev-1"},
+                "identity": {"auth_server_url": "https://auth.samsungosp.com", "userauth_token": "token-1"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    master_file.chmod(0o600)
+    with pytest.raises(AuthError) as exc_info2:
+        client.verify_find_token()
+    assert "missing auth_server_url or user_id" in str(exc_info2.value)
+    client.http.get.assert_not_called()
 
 
 def test_migrate_then_verify_find_token_works_from_canonical_only(tmp_path):

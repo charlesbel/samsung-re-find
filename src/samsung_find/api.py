@@ -100,8 +100,11 @@ class SamsungFindClient:
 
     def verify_find_token(self) -> bool:
         summary = self.auth.master_summary()
-        auth_server_raw = summary.get("auth_server_url") or "account.samsung.com"
-        user_id = summary.get("user_id") or ""
+        auth_server_raw = summary.get("auth_server_url")
+        user_id = summary.get("user_id")
+        if not auth_server_raw or not user_id:
+            raise SamsungAuthError("Cannot verify Find token: master identity is missing auth_server_url or user_id")
+
         auth_server = auth_server_raw.removeprefix("https://").removeprefix("http://")
         headers = {
             "X-Sec-Sa-Userid": user_id,
