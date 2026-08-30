@@ -88,9 +88,12 @@ class SamsungFindClient:
         }
 
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        response = self.http.request(method, url, headers=self._headers(), **kwargs)
-        if response.status_code in (401, 403):
-            response = self.http.request(method, url, headers=self._headers(force_refresh=True), **kwargs)
+        from .transport import validate_smartthings_url
+        valid_url = validate_smartthings_url(str(url))
+        headers = kwargs.pop("headers", None) or self._headers()
+        response = self.http.request(method, valid_url, headers=headers, **kwargs)
+        if response.status_code in (401, 403) and method.upper() == "GET":
+            response = self.http.request(method, valid_url, headers=self._headers(force_refresh=True), **kwargs)
         if not response.is_success:
             raise SamsungAuthError(f"SmartThings request failed with HTTP {response.status_code}")
         return response
@@ -106,14 +109,11 @@ class SamsungFindClient:
             "X-Sec-Tab-Name": "DEVICES",
             "Accept": "application/json",
         }
-        response = self.http.get(
-            f"https://api.samsungfind.com/users/{state['user_id']}/key", headers=headers
-        )
+        url = f"https://api.samsungfind.com/users/{state['user_id']}/key"
+        response = self.http.get(url, headers=headers)
         if response.status_code in (401, 403):
             headers["X-Sec-Sa-Authtoken"] = self.auth.access_token(FIND, force_refresh=True)
-            response = self.http.get(
-                f"https://api.samsungfind.com/users/{state['user_id']}/key", headers=headers
-            )
+            response = self.http.get(url, headers=headers)
         return response.status_code == 200
 
     def _ensure_user_uuid(self) -> str:
@@ -129,13 +129,17 @@ class SamsungFindClient:
     def _ensure_installed_app(self) -> str:
         if self._installed_app_id:
             return self._installed_app_id
+        from .transport import validate_smartthings_url
         user_uuid = self._ensure_user_uuid()
-        url: str | None = "https://api.smartthings.com/installedapps?allowed=true"
+        initial_url = "https://api.smartthings.com/installedapps?allowed=true"
+        url: str | None = initial_url
         candidates: list[dict[str, Any]] = []
         while url:
-            data = self._request("GET", url).json()
+            valid_url = validate_smartthings_url(url, base_url=initial_url)
+            data = self._request("GET", valid_url).json()
             candidates.extend(data.get("items", []))
-            url = (((data.get("_links") or {}).get("next") or {}).get("href"))
+            next_link = (data.get("_links") or {}).get("next") or {}
+            url = next_link.get("href")
         plugin = "com.samsung.android.plugin.fme"
         selected = next(
             (
@@ -169,6 +173,7 @@ class SamsungFindClient:
         extra_params: dict[str, Any] | None = None,
         body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        from .transport import _PROTECTED_FIELDS
         state = self.auth.state()
         token = self.auth.access_token(IOT)
         now = datetime.now(self.timezone)
@@ -186,6 +191,9 @@ class SamsungFindClient:
             "encodedBody": self._b64(body),
         }
         if extra_params:
+            for key in extra_params:
+                if key in _PROTECTED_FIELDS:
+                    raise SamsungAuthError(f"Protected parameter {key!r} cannot be overridden")
             parameters.update(extra_params)
         payload = {
             "client": {
@@ -207,15 +215,6 @@ class SamsungFindClient:
             json=payload,
         ).json()
         status_code = response.get("statusCode")
-        if status_code in (401, 403) or response.get("errorCode") == "UnauthorizedError":
-            self.auth.access_token(IOT, force_refresh=True)
-            parameters["requesterToken"] = self.auth.access_token(IOT)
-            response = self._request(
-                "POST",
-                f"https://api.smartthings.com/installedapps/{app_id}/execute",
-                json=payload,
-            ).json()
-            status_code = response.get("statusCode")
         if status_code != 200:
             raise SamsungAuthError(
                 f"Samsung Find installed app failed ({status_code}/{response.get('errorCode')})"
