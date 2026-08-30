@@ -3,9 +3,9 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "samsung-find"
+name = "samsung-re-find"
 version = "0.2.0"
-description = "Persistent Samsung Find SDK, JSON CLI, and MCP server for Samsung SmartThings Find"
+description = "Unofficial reverse-engineered Samsung Find SDK, JSON CLI & MCP server"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -33,12 +33,14 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = [
-  "mcp>=1.0.0",
+  "mcp==1.29.1",
 ]
 dev = [
   "build>=1.2",
+  "detect-secrets>=1.5",
   "jsonschema>=4.20",
-  "mcp>=1.0.0",
+  "mcp==1.29.1",
+  "pip-audit>=2.9",
   "pytest>=8",
   "respx>=0.21",
   "ruff>=0.6",
@@ -46,14 +48,16 @@ dev = [
 ]
 
 [project.scripts]
+samsung-re-find = "samsung_find.cli:main"
+samsung-re-find-mcp = "samsung_find.mcp_server:main"
 samsung-find = "samsung_find.cli:main"
 samsung-find-mcp = "samsung_find.mcp_server:main"
 
 [project.urls]
-Homepage = "https://github.com/charlesbel/samsung-find"
-Repository = "https://github.com/charlesbel/samsung-find"
-Issues = "https://github.com/charlesbel/samsung-find/issues"
-Documentation = "https://github.com/charlesbel/samsung-find#readme"
+Homepage = "https://github.com/charlesbel/samsung-re-find"
+Repository = "https://github.com/charlesbel/samsung-re-find"
+Issues = "https://github.com/charlesbel/samsung-re-find/issues"
+Documentation = "https://github.com/charlesbel/samsung-re-find#readme"
 
 [tool.pytest.ini_options]
 addopts = "-q"
@@ -70,4 +74,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-"samsung_find" = ["py.typed"]
+"samsung_find" = ["py.typed", "schemas/**/*.json", "schemas/*.json"]

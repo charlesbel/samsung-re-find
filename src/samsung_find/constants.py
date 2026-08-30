@@ -18,3 +18,9 @@ DEFAULT_REDIRECT_PATH = "~/.config/samsung-find/redirect.uri"
 DEFAULT_COUNTRY = "US"
 DEFAULT_LANGUAGE = "en"
 DEFAULT_TIMEZONE = "UTC"
+
+FIND_REQUESTER_NAME = "FIND_MY_MOBILE"
+"""Public SmartThings Find protocol requester identifier for location operations."""
+
+FIND_REQUESTER_TOKEN = "b47285ea-2615-46eb-a1d2-28e4e94119d8"
+"""Public SmartThings Find protocol requester UUID used in device operation payloads."""

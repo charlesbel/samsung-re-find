@@ -118,3 +118,49 @@ def test_migrate_rejects_incomplete_legacy_data(tmp_path, incomplete_data):
 
     with pytest.raises(AuthError):
         store.migrate_legacy()
+
+
+@pytest.mark.parametrize(
+    "adversarial_created_at",
+    [
+        9999999999.0,  # far future timestamp
+        -500.0,  # negative timestamp
+        "invalid_timestamp",  # corrupted string
+        True,  # boolean
+        None,  # None
+    ],
+)
+def test_migrate_adversarial_created_at_normalized_and_reloads(tmp_path, adversarial_created_at):
+    import math
+
+    legacy_file = tmp_path / "legacy" / "state.json"
+    legacy_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_data = {
+        "schema": 1,
+        "device_id": "synthetic-test-device-id-999",
+        "auth_server_url": "https://auth.samsungosp.com",
+        "login_id": "synthetic-test-user@example.invalid",
+        "user_id": "synthetic-test-user-id-888",
+        "userauth_token": "synthetic-test-userauth-token-777",
+        "created_at": adversarial_created_at,
+    }
+    legacy_file.write_text(json.dumps(legacy_data), encoding="utf-8")
+    legacy_file.chmod(0o600)
+
+    target_master_file = tmp_path / "master" / "master.json"
+    canonical_derived = tmp_path / "derived" / "state.json"
+    store = MasterStateStore(
+        master_path=target_master_file,
+        canonical_state_path=canonical_derived,
+        legacy_path=legacy_file,
+    )
+    result = store.migrate_legacy()
+    assert result["migrated"] is True
+
+    # Emitted master satisfies created_at <= updated_at and immediately reloads without error
+    loaded = store.load(allow_legacy_fallback=False)
+    assert loaded is not None
+    assert math.isfinite(loaded.created_at)
+    assert math.isfinite(loaded.updated_at)
+    assert 0 <= loaded.created_at <= loaded.updated_at
+    assert loaded.account.login_id == "synthetic-test-user@example.invalid"

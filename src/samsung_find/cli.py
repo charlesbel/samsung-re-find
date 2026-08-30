@@ -7,9 +7,7 @@ import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
-import httpx
-
-from .api import SamsungFindClient
+from .api import SamsungFindClient as _LegacyTransportClient
 from .auth import SamsungAuth
 from .credentials import (
     MasterStateStore,
@@ -25,6 +23,7 @@ from .exceptions import (
     StorageError,
 )
 from .serialization import serialize_error, serialize_response, to_json
+from .service import FindService
 from .storage import secure_read_text
 
 
@@ -45,7 +44,10 @@ def emit(value: object, *, legacy_json: bool = False) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = SamsungFindArgumentParser(prog="samsung-find", description="Samsung Find CLI and tools")
+    root = SamsungFindArgumentParser(
+        prog="samsung-re-find",
+        description="Unofficial reverse-engineered Samsung Find SDK, JSON CLI & MCP server",
+    )
     root.add_argument("--legacy-json", action="store_true", help="Output raw legacy JSON without v1 envelope")
     root.add_argument("--master-state", default=None, help="Path to shared Samsung master state v1")
     root.add_argument("--state", default=None, help="Path to canonical Samsung Find derived state")
@@ -96,8 +98,13 @@ def install_handler(redirect_path: str | Path | None = None) -> dict[str, object
     applications = Path("~/.local/share/applications").expanduser()
     applications.mkdir(parents=True, exist_ok=True)
     desktop = applications / "samsung-find-callback.desktop"
+    import shlex
+
     env_path = str(target_redirect)
-    exec_line = f"env SAMSUNG_FIND_REDIRECT_PATH={env_path} {sys.executable} -m samsung_find.capture_redirect %u"
+    exec_line = (
+        f"env SAMSUNG_FIND_REDIRECT_PATH={shlex.quote(env_path)} "
+        f"{shlex.quote(sys.executable)} -m samsung_find.capture_redirect %u"
+    )
     desktop.write_text(
         "[Desktop Entry]\n"
         "Type=Application\n"
@@ -122,30 +129,52 @@ def install_handler(redirect_path: str | Path | None = None) -> dict[str, object
     return {"installed": True, "handler": str(desktop), "redirect_file": env_path}
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    service: FindService | None = None,
+    auth: SamsungAuth | None = None,
+) -> int:
     try:
         args = parser().parse_args(argv)
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else 2
 
-    auth = SamsungAuth(
-        state_path=args.state,
-        pending_path=args.pending,
-        master_path=args.master_state,
-        legacy_state_path=args.legacy_state,
-    )
-    client: SamsungFindClient | None = None
+    auth_instance = auth
+    if auth_instance is None and service is None:
+        auth_instance = SamsungAuth(
+            state_path=args.state,
+            pending_path=args.pending,
+            master_path=args.master_state,
+            legacy_state_path=args.legacy_state,
+        )
+
+    svc = service
     legacy = getattr(args, "legacy_json", False)
 
     try:
         if args.command == "install-handler":
             emit(install_handler(args.redirect_file), legacy_json=legacy)
         elif args.command == "auth-start":
-            emit({"login_url": auth.start(args.country, args.locale)}, legacy_json=legacy)
+            if auth_instance is None:
+                auth_instance = SamsungAuth(
+                    state_path=args.state,
+                    pending_path=args.pending,
+                    master_path=args.master_state,
+                    legacy_state_path=args.legacy_state,
+                )
+            emit({"login_url": auth_instance.start(args.country, args.locale)}, legacy_json=legacy)
         elif args.command == "auth-complete":
+            if auth_instance is None:
+                auth_instance = SamsungAuth(
+                    state_path=args.state,
+                    pending_path=args.pending,
+                    master_path=args.master_state,
+                    legacy_state_path=args.legacy_state,
+                )
             redirect_target = resolve_redirect_path(args.redirect_file)
             redirect = secure_read_text(redirect_target)
-            emit(auth.complete(redirect), legacy_json=legacy)
+            emit(auth_instance.complete(redirect), legacy_json=legacy)
         elif args.command == "migrate-master":
             store = MasterStateStore(
                 master_path=args.master_state,
@@ -154,35 +183,57 @@ def main(argv: list[str] | None = None) -> int:
             )
             emit(store.migrate_legacy(force=args.force), legacy_json=legacy)
         elif args.command == "status":
-            emit(auth.public_status(), legacy_json=legacy)
+            if auth_instance is None:
+                auth_instance = SamsungAuth(
+                    state_path=args.state,
+                    pending_path=args.pending,
+                    master_path=args.master_state,
+                    legacy_state_path=args.legacy_state,
+                )
+            emit(auth_instance.public_status(), legacy_json=legacy)
         else:
-            client = SamsungFindClient(
-                auth,
-                country=args.country,
-                language=args.language,
-                timezone=args.timezone,
-            )
+            if svc is None:
+                if auth_instance is None:
+                    auth_instance = SamsungAuth(
+                        state_path=args.state,
+                        pending_path=args.pending,
+                        master_path=args.master_state,
+                        legacy_state_path=args.legacy_state,
+                    )
+                transport = _LegacyTransportClient(
+                    auth_instance,
+                    country=args.country,
+                    language=args.language,
+                    timezone=args.timezone,
+                )
+                svc = FindService(transport)
+
             if args.command == "verify":
-                cookie = auth.web_session_cookie()
+                if auth_instance is None:
+                    auth_instance = SamsungAuth(
+                        state_path=args.state,
+                        pending_path=args.pending,
+                        master_path=args.master_state,
+                        legacy_state_path=args.legacy_state,
+                    )
+                cookie = auth_instance.web_session_cookie()
                 emit(
                     {
-                        "persistent_master_token_present": auth.public_status()["authenticated"],
-                        "web_session_valid": auth._validate_web_cookie(cookie),
+                        "persistent_master_token_present": auth_instance.public_status()["authenticated"],
+                        "web_session_valid": auth_instance._validate_web_cookie(cookie),
                     },
                     legacy_json=legacy,
                 )
             elif args.command == "devices":
-                keys = (
-                    ("id", "name", "model", "location_type") if args.include_ids else ("name", "model", "location_type")
-                )
-                emit([{key: d.get(key) for key in keys} for d in client.devices()], legacy_json=legacy)
+                devices = svc.list_devices(include_ids=args.include_ids)
+                emit([d.to_dict(include_id=args.include_ids) for d in devices], legacy_json=legacy)
             elif args.command == "capabilities":
-                emit(client.capabilities(args.query), legacy_json=legacy)
+                emit(svc.get_capabilities(args.query), legacy_json=legacy)
             elif args.command == "check":
-                emit(client.check_connection(args.query, poll_seconds=args.poll_seconds), legacy_json=legacy)
+                emit(svc.check_connection(args.query, poll_seconds=args.poll_seconds), legacy_json=legacy)
             elif args.command == "ring":
                 emit(
-                    client.ring(
+                    svc.ring(
                         args.query,
                         status=args.status,
                         message=args.message,
@@ -192,14 +243,15 @@ def main(argv: list[str] | None = None) -> int:
                 )
             elif args.command == "track":
                 emit(
-                    client.track(args.query, enabled=args.action == "start", poll_seconds=args.poll_seconds),
+                    svc.set_tracking(args.query, enabled=args.action == "start", poll_seconds=args.poll_seconds),
                     legacy_json=legacy,
                 )
             elif args.command == "locate":
-                emit(
-                    client.locate(args.query, active=not args.passive, poll_seconds=args.poll_seconds),
-                    legacy_json=legacy,
-                )
+                if args.passive:
+                    res = svc.get_last_location(args.query)
+                else:
+                    res = svc.request_location(args.query, poll_seconds=args.poll_seconds)
+                emit(res, legacy_json=legacy)
         return 0
 
     except AuthError as exc:
@@ -208,36 +260,39 @@ def main(argv: list[str] | None = None) -> int:
             print(to_json(err))
         print(f"Authentication error: {exc}", file=sys.stderr)
         return 3
-    except (NetworkError, httpx.HTTPError) as exc:
-        code = getattr(exc, "code", "network_error")
-        err = serialize_error(code=code, message=str(exc))
-        if not legacy:
-            print(to_json(err))
-        print(f"Network error: {exc}", file=sys.stderr)
-        return 4
-    except (SecurityError, StorageError, PermissionError, FileNotFoundError) as exc:
-        code = getattr(exc, "code", "storage_error")
-        err = serialize_error(code=code, message=str(exc))
-        if not legacy:
-            print(to_json(err))
-        print(f"Storage or security error: {exc}", file=sys.stderr)
-        return 5
-    except (DeviceNotFoundError, OperationError, RateLimitError) as exc:
-        err = serialize_error(code=exc.code, message=str(exc))
-        if not legacy:
-            print(to_json(err))
-        print(f"Operation error: {exc}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        err = serialize_error(code="unknown_error", message=str(exc))
-        if not legacy:
-            print(to_json(err))
-        print(f"Unexpected error: {exc}", file=sys.stderr)
-        return 1
+    except (NetworkError, Exception) as exc:
+        if isinstance(exc, (SecurityError, StorageError, PermissionError, FileNotFoundError)):
+            code = getattr(exc, "code", "storage_error")
+            err = serialize_error(code=code, message=str(exc))
+            if not legacy:
+                print(to_json(err))
+            print(f"Storage or security error: {exc}", file=sys.stderr)
+            return 5
+        elif isinstance(exc, (DeviceNotFoundError, OperationError, RateLimitError)):
+            code = getattr(exc, "code", "operation_error")
+            err = serialize_error(code=code, message=str(exc))
+            if not legacy:
+                print(to_json(err))
+            print(f"Operation error: {exc}", file=sys.stderr)
+            return 1
+        elif isinstance(exc, NetworkError) or "httpx" in exc.__class__.__module__:
+            code = getattr(exc, "code", "network_error")
+            err = serialize_error(code=code, message=str(exc))
+            if not legacy:
+                print(to_json(err))
+            print(f"Network error: {exc}", file=sys.stderr)
+            return 4
+        else:
+            err = serialize_error(code="unknown_error", message=str(exc))
+            if not legacy:
+                print(to_json(err))
+            print(f"Unexpected error: {exc}", file=sys.stderr)
+            return 1
     finally:
-        if client:
-            client.close()
-        auth.close()
+        if svc is not None and service is None:
+            svc.close()
+        if auth_instance is not None and auth is None:
+            auth_instance.close()
 
 
 if __name__ == "__main__":

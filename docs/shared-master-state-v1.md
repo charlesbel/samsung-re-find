@@ -1,25 +1,25 @@
 # Shared Samsung Account Master State Contract (v1)
 
-This specification defines the neutral, shared authentication state schema (`master-state-v1`) used across Samsung ecosystem client tools (such as `samsung-find` and `samsung-health-cloud`).
+This specification defines the neutral, shared authentication state schema (`master-state-v1`) used across Samsung ecosystem client tools (such as `samsung-re-find` and `samsung-re-health`).
 
 ## Architecture & Responsibilities
 
 ```text
-Samsung Account interactive login (samsung-find)
+Samsung Account interactive login (samsung-re-find)
                     │
                     ▼
      Shared Neutral Master State v1
      (samsung-account/master.json)
            │                  │
            ▼                  ▼
-  Samsung Find State   Samsung Health Cloud State
+  Samsung Find State   Samsung Health State
   (derived tokens)     (derived tokens & mirror)
 ```
 
-- **Primary Writer:** `samsung-find` interactive authentication flow (`auth-start` / `auth-complete`).
-- **Readers:** `samsung-find` and `samsung-health-cloud`.
-- **Health Cloud Write Policy:** Strict read-only. `samsung-health-cloud` NEVER writes or modifies the master state file.
-- **Derived Token Storage:** Service-specific derived tokens (e.g. Find `offline.access`, SmartThings `iot.client`, web session cookies, Health sync checkpoints) are stored strictly in their respective service state files (`samsung-find/state.json`, `samsung-health-cloud/state.json`) and NEVER in `master.json`.
+- **Primary Writer:** `samsung-re-find` interactive authentication flow (`auth-start` / `auth-complete`).
+- **Readers:** `samsung-re-find` and `samsung-re-health`.
+- **Health Write Policy:** Strict read-only. `samsung-re-health` NEVER writes or modifies the master state file.
+- **Derived Token Storage:** Service-specific derived tokens (e.g. Find `offline.access`, SmartThings `iot.client`, web session cookies, Health sync checkpoints) are stored strictly in their respective service state files (`samsung-find/state.json`, `samsung-health/state.json`) and NEVER in `master.json`.
 
 ## Resolution Priority
 

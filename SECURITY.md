@@ -1,11 +1,13 @@
 # Security Policy
 
+> **Disclaimer:** Unofficial reverse-engineered Samsung Find SDK, JSON CLI & MCP server. Not affiliated with, endorsed by, or supported by Samsung Electronics or SmartThings.
+
 ## Supported Versions
 
 | Version | Supported |
 |---|---|
-| 0.2.x | Yes (Current release candidate) |
-| 0.1.x | Deprecated (Migrate with `samsung-find migrate-master`) |
+| 0.2.x | Yes (Current release candidate `samsung-re-find`) |
+| 0.1.x | Deprecated (Migrate with `samsung-re-find migrate-master`) |
 
 ## Reporting a Vulnerability
 

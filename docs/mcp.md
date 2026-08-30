@@ -1,21 +1,23 @@
 # Samsung Find MCP Server
 
-The `samsung-find-mcp` executable implements the Model Context Protocol (MCP) over `stdio`, allowing local AI agents (such as Hermes, Claude Desktop, Goose) to securely inspect device status and retrieve locations without manual credential management.
+The `samsung-re-find-mcp` executable (legacy alias `samsung-find-mcp`) implements the Model Context Protocol (MCP) over `stdio`, allowing local AI agents (such as Hermes, Claude Desktop, Goose, Cursor) to securely inspect device status and retrieve locations without manual credential management.
+
+> **Disclaimer:** Unofficial reverse-engineered Samsung Find SDK, JSON CLI & MCP server. Not affiliated with, endorsed by, or supported by Samsung Electronics or SmartThings.
 
 ## Installation
 
 ```bash
-pip install 'samsung-find[mcp]'
+pip install 'samsung-re-find[mcp]'
 ```
 
 ## Running the Server
 
 ```bash
-# Default: read-only tools only
-samsung-find-mcp
+# Default: read-only tools only (canonical: samsung-re-find-mcp; legacy alias: samsung-find-mcp)
+samsung-re-find-mcp
 
 # With explicit side-effects enabled
-samsung-find-mcp --allow-effects ring,tracking
+samsung-re-find-mcp --allow-effects ring,tracking
 ```
 
 ## Exposed MCP Tools
@@ -51,12 +53,14 @@ samsung-find-mcp --allow-effects ring,tracking
 These tools perform physical or audible changes to user devices. They are disabled by default and require `--allow-effects ring` or `--allow-effects tracking`:
 
 1. `samsung_find_ring`
-   - Description: Audibly ring device alarm or stop ringing.
-   - Parameters: `query` (string, required), `status` ("start"|"stop"), `message` (string, optional)
+   - Description: Audibly ring a device or stop ringing.
+   - Parameters: `query` (string, required), `status` (`"start"` or `"stop"`), `message` (string, optional), `confirm` (must be exactly `true`).
 
 2. `samsung_find_set_tracking`
-   - Description: Toggle lost-mode continuous tracking.
-   - Parameters: `query` (string, required), `enabled` (boolean, required)
+   - Description: Toggle continuous lost-device tracking.
+   - Parameters: `query` (string, required), `enabled` (boolean, required), `confirm` (must be exactly `true`).
+
+Enabling a tool at server startup does not authorize an individual effect: each call must also include `confirm: true` after the user has explicitly approved the target and action.
 
 ## Configuration Options
 

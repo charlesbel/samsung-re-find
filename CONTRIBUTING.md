@@ -1,6 +1,8 @@
 # Contributing to Samsung Find
 
-Thank you for contributing to `samsung-find`!
+> **Disclaimer:** Unofficial reverse-engineered Samsung Find SDK, JSON CLI & MCP server. Not affiliated with, endorsed by, or supported by Samsung Electronics or SmartThings.
+
+Thank you for contributing to `samsung-re-find`!
 
 ## Local Development Workflow
 

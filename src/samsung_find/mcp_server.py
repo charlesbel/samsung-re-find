@@ -181,9 +181,11 @@ class SamsungFindMCPServer:
         }
 
     def _handle_list_devices(self, args: dict[str, Any]) -> Any:
-        include_ids = bool(args.get("include_ids", False))
+        include_ids = args.get("include_ids", False)
+        if type(include_ids) is not bool:
+            raise ValueError("include_ids must be a boolean (True or False)")
         service = self.get_service()
-        devices = service.list_devices()
+        devices = service.list_devices(include_ids=include_ids)
         return [d.to_dict(include_id=include_ids) for d in devices]
 
     def _handle_get_capabilities(self, args: dict[str, Any]) -> Any:
@@ -286,8 +288,8 @@ def parse_effects_arg(value: str | None) -> set[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="samsung-find-mcp",
-        description="Samsung Find stdio Model Context Protocol (MCP) server",
+        prog="samsung-re-find-mcp",
+        description="Unofficial reverse-engineered Samsung Find SDK, JSON CLI & MCP server",
     )
     parser.add_argument(
         "--allow-effects",
@@ -314,41 +316,68 @@ def main(argv: list[str] | None = None) -> int:
     server = create_mcp_server(config=config, allow_effects=allowed_effects)
 
     try:
+        import importlib.metadata
+
         import anyio
         from mcp.server.fastmcp import FastMCP
+        from mcp.types import ToolAnnotations
 
-        mcp_app = FastMCP("samsung-find")
+        try:
+            mcp_version = importlib.metadata.version("mcp")
+        except Exception as exc:
+            raise RuntimeError("MCP SDK version cannot be determined.") from exc
+
+        if mcp_version != "1.29.1":
+            raise RuntimeError(
+                f"Unsupported MCP SDK version: {mcp_version}. "
+                "samsung-re-find requires exactly mcp==1.29.1 for deterministic protocol schema guarantees."
+            )
+
+        mcp_app = FastMCP("samsung-re-find")
+
+        if not hasattr(mcp_app, "_tool_manager") or not hasattr(mcp_app._tool_manager, "_tools"):
+            raise RuntimeError(
+                "MCP SDK internal structure mismatch: FastMCP._tool_manager._tools is missing. "
+                "samsung-re-find requires FastMCP tool manager support."
+            )
 
         for tool_name, tool_info in server._tools.items():
             desc = tool_info["description"]
+            is_effect = bool(tool_info["is_effect"])
+            annotations = ToolAnnotations(
+                readOnlyHint=not is_effect,
+                destructiveHint=False,
+                idempotentHint=not is_effect,
+                openWorldHint=True,
+            )
 
             if tool_name == "samsung_find_status":
 
-                @mcp_app.tool(name=tool_name, description=desc)
+                @mcp_app.tool(name=tool_name, description=desc, annotations=annotations)
                 def handle_status() -> dict[str, Any]:
                     return server.call_tool("samsung_find_status", {})
 
             elif tool_name == "samsung_find_list_devices":
 
-                @mcp_app.tool(name=tool_name, description=desc)
+                @mcp_app.tool(name=tool_name, description=desc, annotations=annotations)
                 def handle_list_devices(include_ids: bool = False) -> dict[str, Any]:
                     return server.call_tool("samsung_find_list_devices", {"include_ids": include_ids})
 
             elif tool_name == "samsung_find_get_capabilities":
 
-                @mcp_app.tool(name=tool_name, description=desc)
+                @mcp_app.tool(name=tool_name, description=desc, annotations=annotations)
                 def handle_capabilities(query: str) -> dict[str, Any]:
                     return server.call_tool("samsung_find_get_capabilities", {"query": query})
 
             elif tool_name == "samsung_find_get_last_location":
 
-                @mcp_app.tool(name=tool_name, description=desc)
+                @mcp_app.tool(name=tool_name, description=desc, annotations=annotations)
                 def handle_last_location(query: str) -> dict[str, Any]:
                     return server.call_tool("samsung_find_get_last_location", {"query": query})
 
             elif tool_name == "samsung_find_request_location":
 
-                @mcp_app.tool(name=tool_name, description=desc)
+                @mcp_app.tool(name=tool_name, description=desc, annotations=annotations)
                 def handle_request_loc(query: str, poll_seconds: int = 180) -> dict[str, Any]:
                     return server.call_tool(
                         "samsung_find_request_location",
@@ -357,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
 
             elif tool_name == "samsung_find_check_connection":
 
-                @mcp_app.tool(name=tool_name, description=desc)
+                @mcp_app.tool(name=tool_name, description=desc, annotations=annotations)
                 def handle_check(query: str, poll_seconds: int = 40) -> dict[str, Any]:
                     return server.call_tool(
                         "samsung_find_check_connection",
@@ -366,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
 
             elif tool_name == "samsung_find_ring":
 
-                @mcp_app.tool(name=tool_name, description=desc)
+                @mcp_app.tool(name=tool_name, description=desc, annotations=annotations)
                 def handle_ring(
                     query: str,
                     confirm: bool,
@@ -387,7 +416,7 @@ def main(argv: list[str] | None = None) -> int:
 
             elif tool_name == "samsung_find_set_tracking":
 
-                @mcp_app.tool(name=tool_name, description=desc)
+                @mcp_app.tool(name=tool_name, description=desc, annotations=annotations)
                 def handle_track(
                     query: str,
                     confirm: bool,
@@ -404,12 +433,19 @@ def main(argv: list[str] | None = None) -> int:
                         },
                     )
 
+        # FastMCP derives closed argument models but omits the JSON Schema marker;
+        # publish the exact pre-I/O contract required by MCP clients.
+        for registered_tool in mcp_app._tool_manager._tools.values():
+            if not hasattr(registered_tool, "parameters") or not isinstance(registered_tool.parameters, dict):
+                raise RuntimeError("MCP SDK internal structure mismatch: Tool parameters object missing or invalid.")
+            registered_tool.parameters["additionalProperties"] = False
+
         anyio.run(mcp_app.run_stdio_async)
         return 0
     except ImportError:
         print(
             "Error: The 'mcp' package is required to run the MCP server.\n"
-            "Install it via: pip install 'samsung-find[mcp]'",
+            "Install it via: pip install 'samsung-re-find[mcp]'",
             file=sys.stderr,
         )
         return 1

@@ -69,11 +69,27 @@ class LocationResult:
     is_fresh: bool = False
     is_precise: bool = False
     map_url: str | None = None
+    address: str | None = None
     timezone: str | None = None
     age_seconds: int | None = None
     battery: str | None = None
     operation: str | None = None
     active_refresh_requested: bool = False
+
+    def __repr__(self) -> str:
+        lat_repr = "[REDACTED]" if self.latitude is not None else None
+        lon_repr = "[REDACTED]" if self.longitude is not None else None
+        map_repr = "[REDACTED]" if self.map_url is not None else None
+        time_repr = "[REDACTED]" if self.timestamp is not None else None
+        return (
+            f"LocationResult(latitude={lat_repr}, longitude={lon_repr}, "
+            f"accuracy_m={self.accuracy_m}, timestamp={time_repr}, is_fresh={self.is_fresh}, "
+            f"is_precise={self.is_precise}, map_url={map_repr}, age_seconds={self.age_seconds}, "
+            f"battery={self.battery!r})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -85,6 +101,8 @@ class LocationResult:
             "is_precise": self.is_precise,
             "map_url": self.map_url,
         }
+        if self.address is not None:
+            data["address"] = self.address
         if self.timezone is not None:
             data["timezone"] = self.timezone
         if self.age_seconds is not None:

@@ -1,4 +1,4 @@
-"""Structured exception hierarchy for samsung-find."""
+"""Structured exception hierarchy for samsung-re-find."""
 
 from __future__ import annotations
 

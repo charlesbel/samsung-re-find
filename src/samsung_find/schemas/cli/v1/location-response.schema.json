@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LocationResponseV1",
+  "type": "object",
+  "required": ["latitude", "longitude", "is_fresh", "is_precise"],
+  "properties": {
+    "latitude": { "type": "number" },
+    "longitude": { "type": "number" },
+    "accuracy_m": { "type": ["number", "null"] },
+    "timestamp": { "type": ["string", "null"] },
+    "is_fresh": { "type": "boolean" },
+    "is_precise": { "type": "boolean" },
+    "address": { "type": ["string", "null"] },
+    "map_url": { "type": ["string", "null"] }
+  }
+}

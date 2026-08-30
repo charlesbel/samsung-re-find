@@ -58,6 +58,38 @@ def test_config_explicit_overrides(tmp_path):
     assert config.language == "en-GB"
     assert config.timezone == "Europe/London"
     assert config.timeout_s == 15.0
-    assert config.master_state_path == master_path.resolve()
-    assert config.state_path == state_path.resolve()
-    assert config.legacy_state_path == legacy_path.resolve()
+    assert config.master_state_path == master_path.absolute()
+    assert config.state_path == state_path.absolute()
+    assert config.legacy_state_path == legacy_path.absolute()
+
+
+def test_config_rejects_symlink_parent_directory(tmp_path):
+    import pytest
+
+    from samsung_find.exceptions import SecurityError
+
+    real_dir = tmp_path / "real_dir"
+    real_dir.mkdir(mode=0o700)
+    symlink_dir = tmp_path / "symlink_dir"
+    symlink_dir.symlink_to(real_dir, target_is_directory=True)
+
+    with pytest.raises(SecurityError, match="symlink"):
+        FindConfig(state_path=symlink_dir / "state.json")
+
+    with pytest.raises(SecurityError, match="symlink"):
+        FindConfig(master_state_path=symlink_dir / "master.json")
+
+    with pytest.raises(SecurityError, match="symlink"):
+        FindConfig(legacy_state_path=symlink_dir / "legacy.json")
+
+    with pytest.raises(SecurityError, match="symlink"):
+        FindConfig(pending_path=symlink_dir / "pending.json")
+
+    with pytest.raises(SecurityError, match="symlink"):
+        FindConfig(redirect_path=symlink_dir / "redirect.uri")
+
+
+def test_config_preserves_lexical_absolute_paths(tmp_path):
+    target = tmp_path / "custom_dir" / "state.json"
+    config = FindConfig(state_path=target)
+    assert config.state_path == target.absolute()

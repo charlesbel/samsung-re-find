@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import stat
 import sys
@@ -16,10 +17,30 @@ from pathlib import Path
 from typing import Any
 
 from .exceptions import AuthError, SecurityError, StorageError
-from .storage import atomic_write_json, atomic_write_text, locked, read_json, secure_read_raw_text
+from .storage import (
+    atomic_write_json,
+    atomic_write_text,
+    expand,
+    locked,
+    read_json,
+    secure_read_raw_text,
+)
 
 MASTER_SCHEMA_ID = "io.github.charlesbel.samsung-account.master"
 MASTER_SCHEMA_VERSION = 1
+
+ALLOWED_MASTER_TOP_KEYS = frozenset(
+    {
+        "schema",
+        "schema_version",
+        "generation",
+        "created_at",
+        "updated_at",
+        "account",
+        "installation",
+        "identity",
+    }
+)
 
 ALLOWED_DERIVED_TOP_KEYS = frozenset(
     {
@@ -100,7 +121,7 @@ def validate_derived_state(data: dict[str, Any]) -> dict[str, Any]:
             raise SecurityError(f"Unknown or unauthorized top-level key in derived state: {k!r}")
 
     schema = data.get("schema")
-    if schema is not None and not isinstance(schema, int):
+    if schema is not None and (type(schema) is not int or isinstance(schema, bool)):
         raise SecurityError("Derived state 'schema' must be an integer")
 
     generation = data.get("master_generation")
@@ -109,7 +130,7 @@ def validate_derived_state(data: dict[str, Any]) -> dict[str, Any]:
 
     for ts_key in ("created_at", "updated_at"):
         ts = data.get(ts_key)
-        if ts is not None and not isinstance(ts, (int, float)):
+        if ts is not None and (type(ts) not in (int, float) or isinstance(ts, bool)):
             raise SecurityError(f"Derived state '{ts_key}' must be numeric")
 
     for kind in ("find", "iot"):
@@ -122,7 +143,9 @@ def validate_derived_state(data: dict[str, Any]) -> dict[str, Any]:
                     raise SecurityError(f"Unauthorized key in '{kind}' token object: {k!r}")
                 if k in ("access_token", "refresh_token", "token_type", "scope") and not isinstance(v, str):
                     raise SecurityError(f"Invalid type for '{kind}.{k}'")
-                if k in ("expires_at", "obtained_at", "expires_in") and not isinstance(v, (int, float)):
+                if k in ("expires_at", "obtained_at", "expires_in") and (
+                    type(v) not in (int, float) or isinstance(v, bool)
+                ):
                     raise SecurityError(f"Invalid numeric timestamp for '{kind}.{k}'")
 
     web_obj = data.get("web")
@@ -134,10 +157,25 @@ def validate_derived_state(data: dict[str, Any]) -> dict[str, Any]:
                 raise SecurityError(f"Unauthorized key in 'web' object: {k!r}")
             if k == "jsessionid" and not isinstance(v, str):
                 raise SecurityError("Invalid type for 'web.jsessionid'")
-            if k in ("updated_at", "obtained_at") and not isinstance(v, (int, float)):
+            if k in ("updated_at", "obtained_at") and (type(v) not in (int, float) or isinstance(v, bool)):
                 raise SecurityError(f"Invalid numeric timestamp for 'web.{k}'")
 
     return data
+
+
+def _normalize_legacy_timestamp(raw_ts: Any, default_now: float, *, max_ts: float | None = None) -> float:
+    """Safely parse and normalize legacy timestamp, rejecting non-finite/negative/future values."""
+    if raw_ts is None or isinstance(raw_ts, bool):
+        return default_now
+    try:
+        val = float(raw_ts)
+    except (ValueError, TypeError):
+        return default_now
+    if not math.isfinite(val) or val < 0:
+        return default_now
+    if max_ts is not None and val > max_ts:
+        return max_ts
+    return val
 
 
 def project_legacy_derived(legacy_data: dict[str, Any], master_generation: str | None = None) -> dict[str, Any]:
@@ -146,11 +184,16 @@ def project_legacy_derived(legacy_data: dict[str, Any], master_generation: str |
         return {}
 
     now = time.time()
+    created_at = _normalize_legacy_timestamp(legacy_data.get("created_at"), now, max_ts=now)
+    updated_at = _normalize_legacy_timestamp(legacy_data.get("updated_at"), now, max_ts=now)
+    if updated_at < created_at:
+        updated_at = created_at
+
     clean: dict[str, Any] = {
         "schema": 1,
         "master_generation": master_generation or str(uuid.uuid4()),
-        "created_at": float(legacy_data.get("created_at", now)),
-        "updated_at": float(legacy_data.get("updated_at", now)),
+        "created_at": created_at,
+        "updated_at": updated_at,
     }
 
     if isinstance(legacy_data.get("find"), dict):
@@ -246,53 +289,94 @@ class MasterState:
         if not isinstance(data, dict):
             raise StorageError("Master state is not a valid JSON object")
 
+        if not set(data).issubset(ALLOWED_MASTER_TOP_KEYS):
+            raise AuthError("Master state contains unauthorized or unknown fields")
+
         schema = data.get("schema")
         if schema != MASTER_SCHEMA_ID:
-            raise AuthError(f"Unsupported master schema: {schema!r}")
+            raise AuthError("Unsupported master schema identifier")
 
         version = data.get("schema_version")
-        if version != MASTER_SCHEMA_VERSION:
-            raise AuthError(f"Unsupported master schema version: {version!r}")
+        if type(version) is not int or isinstance(version, bool) or version != MASTER_SCHEMA_VERSION:
+            raise AuthError("Unsupported master schema version")
 
-        generation = str(data.get("generation", ""))
-        if not generation:
-            raise AuthError("Master state missing generation identifier")
+        generation = data.get("generation")
+        if not isinstance(generation, str) or not generation.strip():
+            raise AuthError("Master state missing or invalid generation identifier")
 
-        created_at = float(data.get("created_at", time.time()))
-        updated_at = float(data.get("updated_at", time.time()))
+        created_raw = data.get("created_at")
+        if (
+            type(created_raw) not in (int, float)
+            or isinstance(created_raw, bool)
+            or not math.isfinite(float(created_raw))
+            or float(created_raw) < 0
+        ):
+            raise AuthError("Master state missing or invalid created_at timestamp")
 
-        account_raw = data.get("account") or {}
-        if not isinstance(account_raw, dict) or not account_raw.get("login_id"):
-            raise AuthError("Master state missing account.login_id")
-        account = MasterAccount(
-            login_id=str(account_raw["login_id"]),
-            user_id=str(account_raw["user_id"]) if account_raw.get("user_id") else None,
-        )
+        updated_raw = data.get("updated_at")
+        if (
+            type(updated_raw) not in (int, float)
+            or isinstance(updated_raw, bool)
+            or not math.isfinite(float(updated_raw))
+            or float(updated_raw) < 0
+        ):
+            raise AuthError("Master state missing or invalid updated_at timestamp")
 
-        installation_raw = data.get("installation") or {}
-        if not isinstance(installation_raw, dict) or not installation_raw.get("physical_address"):
-            raise AuthError("Master state missing installation.physical_address")
-        installation = MasterInstallation(
-            physical_address=str(installation_raw["physical_address"]),
-        )
+        if float(updated_raw) < float(created_raw):
+            raise AuthError("Master state updated_at cannot be earlier than created_at")
 
-        identity_raw = data.get("identity") or {}
-        if not isinstance(identity_raw, dict) or not identity_raw.get("userauth_token"):
-            raise AuthError("Master state missing identity.userauth_token")
+        account_raw = data.get("account")
+        if not isinstance(account_raw, dict):
+            raise AuthError("Master state missing or invalid account object")
+        for k in account_raw:
+            if k not in ("login_id", "user_id"):
+                raise AuthError("Master state account object contains unauthorized fields")
+        login_id = account_raw.get("login_id")
+        if not isinstance(login_id, str) or not login_id.strip():
+            raise AuthError("Master state missing or invalid account.login_id")
+        user_id = account_raw.get("user_id")
+        if user_id is not None and (not isinstance(user_id, str) or not user_id.strip()):
+            raise AuthError("Master state account.user_id must be a non-empty string")
+        account = MasterAccount(login_id=login_id.strip(), user_id=user_id.strip() if user_id else None)
 
-        auth_server = validate_auth_server_url(str(identity_raw.get("auth_server_url", "")))
+        installation_raw = data.get("installation")
+        if not isinstance(installation_raw, dict):
+            raise AuthError("Master state missing or invalid installation object")
+        if set(installation_raw) != {"physical_address"}:
+            raise AuthError("Master state installation object contains unauthorized or missing fields")
+        phys_addr = installation_raw.get("physical_address")
+        if not isinstance(phys_addr, str) or not phys_addr.strip():
+            raise AuthError("Master state missing or invalid installation.physical_address")
+        installation = MasterInstallation(physical_address=phys_addr.strip())
+
+        identity_raw = data.get("identity")
+        if not isinstance(identity_raw, dict):
+            raise AuthError("Master state missing or invalid identity object")
+        if set(identity_raw) != {"auth_server_url", "userauth_token"}:
+            raise AuthError("Master state identity object contains unauthorized or missing fields")
+        auth_url_raw = identity_raw.get("auth_server_url")
+        if not isinstance(auth_url_raw, str) or not auth_url_raw.strip():
+            raise AuthError("Master state missing or invalid identity.auth_server_url")
+        token_raw = identity_raw.get("userauth_token")
+        if not isinstance(token_raw, str) or not token_raw.strip():
+            raise AuthError("Master state missing or invalid identity.userauth_token")
+
+        try:
+            auth_server = validate_auth_server_url(auth_url_raw.strip())
+        except SecurityError as exc:
+            raise AuthError("Master state contains untrusted identity.auth_server_url") from exc
 
         identity = MasterIdentity(
             auth_server_url=auth_server,
-            userauth_token=str(identity_raw["userauth_token"]),
+            userauth_token=token_raw.strip(),
         )
 
         return cls(
             schema=schema,
             schema_version=version,
-            generation=generation,
-            created_at=created_at,
-            updated_at=updated_at,
+            generation=generation.strip(),
+            created_at=float(created_raw),
+            updated_at=float(updated_raw),
             account=account,
             installation=installation,
             identity=identity,
@@ -328,106 +412,106 @@ def validate_auth_server_url(value: str) -> str:
 def resolve_master_state_path(explicit_path: str | Path | None = None) -> Path:
     """Resolve the master state file location using standard OS conventions."""
     if explicit_path:
-        return Path(explicit_path).expanduser().resolve()
+        return expand(explicit_path)
 
     env_path = os.environ.get("SAMSUNG_ACCOUNT_MASTER_STATE")
     if env_path:
-        return Path(env_path).expanduser().resolve()
+        return expand(env_path)
 
     if sys.platform == "win32":
         app_data = os.environ.get("APPDATA")
         base = Path(app_data) if app_data else Path.home() / "AppData" / "Roaming"
-        return (base / "samsung-account" / "master.json").resolve()
+        return expand(base / "samsung-account" / "master.json")
     elif sys.platform == "darwin":
-        return (Path.home() / "Library" / "Application Support" / "samsung-account" / "master.json").resolve()
+        return expand(Path.home() / "Library" / "Application Support" / "samsung-account" / "master.json")
     else:
         xdg_config = os.environ.get("XDG_CONFIG_HOME")
         base = Path(xdg_config) if xdg_config else Path.home() / ".config"
-        return (base / "samsung-account" / "master.json").resolve()
+        return expand(base / "samsung-account" / "master.json")
 
 
 def resolve_find_state_path(explicit_path: str | Path | None = None) -> Path:
     """Resolve canonical Find derived state location using standard OS conventions."""
     if explicit_path:
-        return Path(explicit_path).expanduser().resolve()
+        return expand(explicit_path)
 
     env_path = os.environ.get("SAMSUNG_FIND_STATE")
     if env_path:
-        return Path(env_path).expanduser().resolve()
+        return expand(env_path)
 
     if sys.platform == "win32":
         app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
         base = Path(app_data) if app_data else Path.home() / "AppData" / "Local"
-        return (base / "samsung-find" / "state.json").resolve()
+        return expand(base / "samsung-find" / "state.json")
     elif sys.platform == "darwin":
-        return (Path.home() / "Library" / "Application Support" / "samsung-find" / "state.json").resolve()
+        return expand(Path.home() / "Library" / "Application Support" / "samsung-find" / "state.json")
     else:
         xdg_state = os.environ.get("XDG_STATE_HOME")
         base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
-        return (base / "samsung-find" / "state.json").resolve()
+        return expand(base / "samsung-find" / "state.json")
 
 
 def resolve_legacy_find_state_path(explicit_path: str | Path | None = None) -> Path:
     """Resolve the legacy Find state file path (${XDG_CONFIG_HOME:-~/.config}/samsung-find/state.json)."""
     if explicit_path:
-        return Path(explicit_path).expanduser().resolve()
+        return expand(explicit_path)
 
     env_path = os.environ.get("SAMSUNG_FIND_LEGACY_STATE")
     if env_path:
-        return Path(env_path).expanduser().resolve()
+        return expand(env_path)
 
     if sys.platform == "win32":
         app_data = os.environ.get("APPDATA")
         base = Path(app_data) if app_data else Path.home() / "AppData" / "Roaming"
-        return (base / "samsung-find" / "state.json").resolve()
+        return expand(base / "samsung-find" / "state.json")
     elif sys.platform == "darwin":
-        return (Path.home() / "Library" / "Application Support" / "samsung-find" / "state.json").resolve()
+        return expand(Path.home() / "Library" / "Application Support" / "samsung-find" / "state.json")
     else:
         xdg_config = os.environ.get("XDG_CONFIG_HOME")
         base = Path(xdg_config) if xdg_config else Path.home() / ".config"
-        return (base / "samsung-find" / "state.json").resolve()
+        return expand(base / "samsung-find" / "state.json")
 
 
 def resolve_pending_path(explicit_path: str | Path | None = None) -> Path:
     """Resolve the pending authentication file path."""
     if explicit_path:
-        return Path(explicit_path).expanduser().resolve()
+        return expand(explicit_path)
 
     env_path = os.environ.get("SAMSUNG_FIND_PENDING")
     if env_path:
-        return Path(env_path).expanduser().resolve()
+        return expand(env_path)
 
     if sys.platform == "win32":
         app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
         base = Path(app_data) if app_data else Path.home() / "AppData" / "Local"
-        return (base / "samsung-find" / "pending.json").resolve()
+        return expand(base / "samsung-find" / "pending.json")
     elif sys.platform == "darwin":
-        return (Path.home() / "Library" / "Application Support" / "samsung-find" / "pending.json").resolve()
+        return expand(Path.home() / "Library" / "Application Support" / "samsung-find" / "pending.json")
     else:
         xdg_state = os.environ.get("XDG_STATE_HOME")
         base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
-        return (base / "samsung-find" / "pending.json").resolve()
+        return expand(base / "samsung-find" / "pending.json")
 
 
 def resolve_redirect_path(explicit_path: str | Path | None = None) -> Path:
     """Resolve the OAuth redirect file path."""
     if explicit_path:
-        return Path(explicit_path).expanduser().resolve()
+        return expand(explicit_path)
 
     env_path = os.environ.get("SAMSUNG_FIND_REDIRECT_PATH")
     if env_path:
-        return Path(env_path).expanduser().resolve()
+        return expand(env_path)
 
     if sys.platform == "win32":
         app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
         base = Path(app_data) if app_data else Path.home() / "AppData" / "Local"
-        return (base / "samsung-find" / "redirect.uri").resolve()
+        return expand(base / "samsung-find" / "redirect.uri")
     elif sys.platform == "darwin":
-        return (Path.home() / "Library" / "Application Support" / "samsung-find" / "redirect.uri").resolve()
+        return expand(Path.home() / "Library" / "Application Support" / "samsung-find" / "redirect.uri")
     else:
         xdg_state = os.environ.get("XDG_STATE_HOME")
         base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
-        return (base / "samsung-find" / "redirect.uri").resolve()
+        return expand(base / "samsung-find" / "redirect.uri")
 
 
 class MasterStateStore:
@@ -443,7 +527,7 @@ class MasterStateStore:
         if canonical_state_path is not None:
             self.canonical_state_path = resolve_find_state_path(canonical_state_path)
         elif master_path is not None:
-            self.canonical_state_path = (self.master_path.parent / "state.json").resolve()
+            self.canonical_state_path = expand(self.master_path.parent / "state.json")
         else:
             self.canonical_state_path = resolve_find_state_path(None)
         self.legacy_path = resolve_legacy_find_state_path(legacy_path)
@@ -502,12 +586,14 @@ class MasterStateStore:
             return None
 
         auth_server = validate_auth_server_url(str(auth_server_raw))
+        now = time.time()
+        ts = _normalize_legacy_timestamp(data.get("created_at"), now, max_ts=now)
         return MasterState(
             schema=MASTER_SCHEMA_ID,
             schema_version=MASTER_SCHEMA_VERSION,
             generation=str(uuid.uuid4()),
-            created_at=float(data.get("created_at", time.time())),
-            updated_at=float(data.get("created_at", time.time())),
+            created_at=ts,
+            updated_at=ts,
             account=MasterAccount(
                 login_id=str(login_id),
                 user_id=str(data.get("user_id")) if data.get("user_id") else None,
@@ -532,7 +618,7 @@ class MasterStateStore:
 
         if allow_legacy_fallback and self.legacy_path.exists():
             warnings.warn(
-                "Using legacy authentication state from samsung-find. Run 'samsung-find migrate-master' to migrate.",
+                "Using legacy authentication state from samsung-find. Run 'samsung-re-find migrate-master' to migrate.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -562,7 +648,11 @@ class MasterStateStore:
 
     def migrate_legacy(self, *, force: bool = False) -> dict[str, Any]:
         """Migrate legacy samsung-find state to shared master-state-v1 and clean derived state."""
-        paths = sorted([self.master_path, self.canonical_state_path, self.legacy_path], key=lambda p: str(p.resolve()))
+        # Reject source == target migration before locking
+        if self.legacy_path == self.master_path or self.legacy_path == self.canonical_state_path:
+            raise AuthError("Migration source and target paths cannot be the same file")
+
+        paths = sorted([self.master_path, self.canonical_state_path, self.legacy_path], key=lambda p: str(p))
 
         with locked(paths[0]), locked(paths[1]), locked(paths[2]):
             if not self.legacy_path.exists():
@@ -593,7 +683,8 @@ class MasterStateStore:
             candidate_login_id = login_id.strip()
             candidate_device_id = device_id.strip()
             candidate_userauth = userauth.strip()
-            candidate_created_at = float(legacy_data.get("created_at", time.time()))
+            now = time.time()
+            candidate_created_at = _normalize_legacy_timestamp(legacy_data.get("created_at"), now, max_ts=now)
 
             legacy_find = (
                 {k: v for k, v in legacy_data["find"].items() if k in ALLOWED_FIND_IOT_KEYS}
@@ -712,14 +803,16 @@ class MasterStateStore:
             old_master_content: str | None = None
             old_master_mode: int | None = None
             if master_exists:
-                old_master_content = secure_read_raw_text(self.master_path, consume=False)
-                old_master_mode = stat.S_IMODE(self.master_path.stat().st_mode)
+                with contextlib.suppress(Exception):
+                    old_master_content = secure_read_raw_text(self.master_path, consume=False)
+                    old_master_mode = stat.S_IMODE(self.master_path.stat().st_mode)
 
             old_derived_content: str | None = None
             old_derived_mode: int | None = None
             if derived_exists:
-                old_derived_content = secure_read_raw_text(self.canonical_state_path, consume=False)
-                old_derived_mode = stat.S_IMODE(self.canonical_state_path.stat().st_mode)
+                with contextlib.suppress(Exception):
+                    old_derived_content = secure_read_raw_text(self.canonical_state_path, consume=False)
+                    old_derived_mode = stat.S_IMODE(self.canonical_state_path.stat().st_mode)
 
             def _rollback_targets() -> None:
                 if need_write_master:

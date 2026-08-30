@@ -101,9 +101,89 @@ def test_master_state_store_rejects_symlink(tmp_path):
     symlink_file = tmp_path / "symlink_master.json"
     symlink_file.symlink_to(target_file)
 
-    store = MasterStateStore(symlink_file)
     with pytest.raises((SecurityError, AuthError, ValueError)):
+        store = MasterStateStore(symlink_file)
         store.load()
+
+
+def test_master_state_store_rejects_symlink_parent_directory(tmp_path):
+    """Reproduction of symlink parent traversal attack."""
+    real_dir = tmp_path / "real_dir"
+    real_dir.mkdir(parents=True, mode=0o700)
+    real_file = real_dir / "master.json"
+    real_file.write_text("{}", encoding="utf-8")
+    real_file.chmod(0o600)
+
+    symlink_dir = tmp_path / "symlink_dir"
+    symlink_dir.symlink_to(real_dir, target_is_directory=True)
+
+    symlink_path = symlink_dir / "master.json"
+    with pytest.raises(SecurityError, match="is a symlink"):
+        store = MasterStateStore(symlink_path)
+        store.load()
+
+
+def test_master_state_from_dict_strict_schema():
+    valid = {
+        "schema": "io.github.charlesbel.samsung-account.master",
+        "schema_version": 1,
+        "generation": "gen-1",
+        "created_at": 100.0,
+        "updated_at": 200.0,
+        "account": {"login_id": "user@example.invalid", "user_id": "uid-1"},
+        "installation": {"physical_address": "dev-1"},
+        "identity": {"auth_server_url": "https://auth.samsungosp.com", "userauth_token": "tok-1"},
+    }
+    state = MasterState.from_dict(valid)
+    assert state.schema == "io.github.charlesbel.samsung-account.master"
+    assert state.schema_version == 1
+
+    # Unknown top-level key
+    with pytest.raises(AuthError, match="Master state contains unauthorized or unknown fields"):
+        MasterState.from_dict({**valid, "extra_key": "val"})
+
+    # Boolean as schema_version (type(True) is bool)
+    with pytest.raises(AuthError, match="Unsupported master schema version"):
+        MasterState.from_dict({**valid, "schema_version": True})
+
+    # Boolean as created_at
+    with pytest.raises(AuthError, match="invalid created_at timestamp"):
+        MasterState.from_dict({**valid, "created_at": True})
+
+    # JSON Schema timestamps are finite and non-negative
+    for invalid_timestamp in (-1, float("nan"), float("inf")):
+        with pytest.raises(AuthError, match="invalid created_at timestamp"):
+            MasterState.from_dict({**valid, "created_at": invalid_timestamp})
+
+    # Missing updated_at
+    invalid_no_ts = dict(valid)
+    del invalid_no_ts["updated_at"]
+    with pytest.raises(AuthError, match="invalid updated_at timestamp"):
+        MasterState.from_dict(invalid_no_ts)
+
+    # Empty generation string
+    with pytest.raises(AuthError, match="invalid generation identifier"):
+        MasterState.from_dict({**valid, "generation": "   "})
+
+    # Account extra key
+    with pytest.raises(AuthError, match="account object contains unauthorized fields"):
+        MasterState.from_dict({**valid, "account": {"login_id": "u", "bad": "key"}})
+
+    # Identity invalid auth url
+    with pytest.raises(AuthError, match="untrusted identity.auth_server_url"):
+        MasterState.from_dict({**valid, "identity": {"auth_server_url": "https://evil.example", "userauth_token": "t"}})
+
+    # updated_at earlier than created_at
+    with pytest.raises(AuthError, match="updated_at cannot be earlier than created_at"):
+        MasterState.from_dict({**valid, "created_at": 200.0, "updated_at": 100.0})
+
+
+def test_migration_rejects_same_source_and_target(tmp_path):
+    same_file = tmp_path / "same.json"
+    same_file.write_text("{}", encoding="utf-8")
+    store = MasterStateStore(master_path=same_file, legacy_path=same_file)
+    with pytest.raises(AuthError, match="cannot be the same file"):
+        store.migrate_legacy()
 
 
 def test_master_state_store_rejects_untrusted_auth_host(tmp_path):
@@ -125,18 +205,18 @@ def test_master_state_path_resolution(tmp_path, monkeypatch):
 
     # 1. Explicit override
     resolved = resolve_master_state_path(explicit_path=str(custom_path))
-    assert resolved == custom_path.resolve()
+    assert resolved == custom_path
 
     # 2. Environment variable
     monkeypatch.setenv("SAMSUNG_ACCOUNT_MASTER_STATE", str(custom_path))
     resolved = resolve_master_state_path()
-    assert resolved == custom_path.resolve()
+    assert resolved == custom_path
 
     # 3. Default path (platformdirs/XDG)
     monkeypatch.delenv("SAMSUNG_ACCOUNT_MASTER_STATE", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     resolved = resolve_master_state_path()
-    assert resolved == (tmp_path / "config" / "samsung-account" / "master.json").resolve()
+    assert resolved == (tmp_path / "config" / "samsung-account" / "master.json")
 
 
 def test_legacy_fallback_loading(tmp_path):

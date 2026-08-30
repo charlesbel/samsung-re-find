@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from .capture_redirect import is_expected_redirect_uri
 from .constants import (
     AUTH_CLIENT_ID,
     ENTRY_POINT_URL,
@@ -60,17 +61,31 @@ class SamsungAuth:
         timeout: float = 30.0,
     ):
         self.state_path = resolve_find_state_path(state_path)
-        self.legacy_state_path = resolve_legacy_find_state_path(legacy_state_path)
+        self.legacy_state_path = resolve_legacy_find_state_path(legacy_state_path or state_path)
         self.pending_path = resolve_pending_path(pending_path)
         self.master_store = MasterStateStore(
             master_path=master_path,
             canonical_state_path=self.state_path,
             legacy_path=self.legacy_state_path,
         )
-        self.http = httpx.Client(timeout=timeout, follow_redirects=True)
+        self.http = httpx.Client(timeout=timeout, follow_redirects=False)
 
     def close(self) -> None:
         self.http.close()
+
+    def _secret_post(self, url: str, **kwargs: Any) -> httpx.Response:
+        """Send a secret-bearing POST exactly once and reject every redirect."""
+        response = self.http.post(url, follow_redirects=False, **kwargs)
+        if 300 <= response.status_code < 400:
+            raise SecurityError("Authentication redirect on secret-bearing POST is forbidden")
+        return response
+
+    def _authenticated_get(self, url: str, **kwargs: Any) -> httpx.Response:
+        """Send an authenticated/query-secret GET once and reject redirects."""
+        response = self.http.get(url, follow_redirects=False, **kwargs)
+        if 300 <= response.status_code < 400:
+            raise SecurityError("Authentication redirect on authenticated GET is forbidden")
+        return response
 
     def __enter__(self) -> SamsungAuth:
         return self
@@ -95,7 +110,7 @@ class SamsungAuth:
         }
 
     def start(self, country: str = "us", locale: str = "en-US") -> str:
-        response = self.http.get(ENTRY_POINT_URL)
+        response = self._authenticated_get(ENTRY_POINT_URL)
         self._raise(response, "entry point")
         entry = response.json()
         device_id = secrets.token_hex(16)
@@ -152,6 +167,8 @@ class SamsungAuth:
         if pending_age < -60 or pending_age > 900:
             Path(self.pending_path).expanduser().unlink(missing_ok=True)
             raise AuthError("Pending Samsung authentication has expired")
+        if not is_expected_redirect_uri(redirect_uri):
+            raise AuthError("Samsung redirect does not match the configured callback target")
         parsed = urllib.parse.urlparse(redirect_uri)
         params = urllib.parse.parse_qs(parsed.query)
         if parsed.fragment:
@@ -172,7 +189,7 @@ class SamsungAuth:
             raise AuthError("Unable to decrypt Samsung redirect") from exc
         auth_server = self._trusted_auth_server_url(auth_server)
 
-        response = self.http.post(
+        response = self._secret_post(
             f"{auth_server}/auth/oauth2/authenticate",
             data={
                 "grant_type": "authorization_code",
@@ -256,30 +273,49 @@ class SamsungAuth:
         except Exception:
             return {}
 
+    @staticmethod
+    def _empty_derived_state(*, generation: str | None = None, created_at: Any = None) -> dict[str, Any]:
+        """Build a credential-free derived state at an account-generation boundary."""
+        now = int(time.time())
+        clean: dict[str, Any] = {
+            "schema": 1,
+            "created_at": created_at if type(created_at) in (int, float) else now,
+            "updated_at": now,
+        }
+        if generation is not None:
+            clean["master_generation"] = generation
+        return clean
+
+    def _reconcile_derived_generation(self, state: dict[str, Any], master: Any) -> tuple[dict[str, Any], bool]:
+        """Clear credentials unless derived state belongs to the validated current master."""
+        generation = master.generation if master else None
+        if master and state.get("master_generation") == generation:
+            validate_derived_state(state)
+            return state, True
+
+        # Do not inspect or validate credentials across an unknown account
+        # boundary; discard the entire derived payload first.
+        clean = self._empty_derived_state(
+            generation=generation,
+            created_at=state.get("created_at"),
+        )
+        self._save_derived_state(clean)
+        return clean, False
+
     def access_token(self, kind: TokenKind, *, force_refresh: bool = False) -> str:
         with locked(self.state_path):
-            state = read_json(self.state_path, required=False)
-            token = state.get(kind.name) or {}
-            expiry = float(token.get("expires_at", 0))
-            if not force_refresh and token.get("access_token") and expiry > time.time() + 120:
-                return str(token["access_token"])
-
-            # Read-only fallback check for unmigrated legacy state
-            if not self.state_path.exists() and self.legacy_state_path.exists():
-                legacy_data = self._load_legacy_safe()
-                leg_token = legacy_data.get(kind.name) or {}
-                leg_expiry = float(leg_token.get("expires_at", 0))
-                if not force_refresh and leg_token.get("access_token") and leg_expiry > time.time() + 120:
-                    return str(leg_token["access_token"])
-                # Expired or force_refresh requires canonical migration
-                raise AuthError(
-                    "Legacy authentication state requires migration to canonical storage before refreshing tokens. "
-                    "Run 'samsung-find migrate-master'"
-                )
-
+            # The master is the account boundary. Validate it before considering
+            # any cached access/refresh token from derived state.
             master = self.master_store.load(allow_legacy_fallback=False)
+            state = read_json(self.state_path, required=False)
+            state, generation_matches = self._reconcile_derived_generation(state, master)
             if not master or not master.identity.userauth_token:
                 raise AuthError("Authentication required: no master token found")
+
+            token = state.get(kind.name) or {}
+            expiry = float(token.get("expires_at", 0))
+            if generation_matches and not force_refresh and token.get("access_token") and expiry > time.time() + 120:
+                return str(token["access_token"])
 
             new_token = self._refresh_or_reissue(
                 token,
@@ -316,20 +352,17 @@ class SamsungAuth:
     def web_session_cookie(self, *, force_refresh: bool = False) -> str:
         """Return a valid SmartThings Find web JSESSIONID."""
         with locked(self.state_path):
+            # Never validate or return a cookie until the current master account
+            # and its generation have been loaded and checked.
+            master = self.master_store.load(allow_legacy_fallback=False)
             state = read_json(self.state_path, required=False)
-            current = (state.get("web") or {}).get("jsessionid")
-            if current and not force_refresh and self._validate_web_cookie(str(current)):
-                return str(current)
-
-            if not self.state_path.exists() and self.legacy_state_path.exists():
-                legacy_data = self._load_legacy_safe()
-                leg_current = (legacy_data.get("web") or {}).get("jsessionid")
-                if leg_current and not force_refresh and self._validate_web_cookie(str(leg_current)):
-                    return str(leg_current)
-
-            master = self.master_store.load(allow_legacy_fallback=True)
+            state, generation_matches = self._reconcile_derived_generation(state, master)
             if not master or not master.identity.userauth_token:
                 raise AuthError("Authentication required: no master token found")
+
+            current = (state.get("web") or {}).get("jsessionid")
+            if generation_matches and current and not force_refresh and self._validate_web_cookie(str(current)):
+                return str(current)
 
             params = {
                 "response_type": "code",
@@ -341,13 +374,17 @@ class SamsungAuth:
                 "scope": IOT_SCOPE,
                 "login_id": master.account.login_id,
             }
-            response = self.http.get(f"{master.identity.auth_server_url}/auth/oauth2/v2/authorize", params=params)
+            response = self._authenticated_get(
+                f"{master.identity.auth_server_url}/auth/oauth2/v2/authorize", params=params
+            )
             self._raise(response, "web Find authorization")
             auth_data = response.json()
             code = auth_data.get("code")
             if not code and auth_data.get("privacyAccepted") == "N":
                 params.pop("login_id", None)
-                response = self.http.get(f"{master.identity.auth_server_url}/auth/oauth2/v2/authorize", params=params)
+                response = self._authenticated_get(
+                    f"{master.identity.auth_server_url}/auth/oauth2/v2/authorize", params=params
+                )
                 self._raise(response, "web Find authorization without login_id")
                 auth_data = response.json()
                 code = auth_data.get("code")
@@ -355,7 +392,7 @@ class SamsungAuth:
                 raise AuthError("Samsung omitted the web Find authorization code")
 
             auth_host = urllib.parse.urlparse(master.identity.auth_server_url).netloc
-            with httpx.Client(timeout=30.0, follow_redirects=True) as web:
+            with httpx.Client(timeout=30.0, follow_redirects=False) as web:
                 response = web.get(
                     "https://smartthingsfind.samsung.com/getState.do",
                     params={"payload": "hound"},
@@ -384,7 +421,7 @@ class SamsungAuth:
 
             clean_state: dict[str, Any] = {
                 "schema": 1,
-                "master_generation": state.get("master_generation") or (master.generation if master else None),
+                "master_generation": master.generation,
                 "created_at": state.get("created_at", int(time.time())),
                 "updated_at": int(time.time()),
             }
@@ -398,13 +435,18 @@ class SamsungAuth:
 
     @staticmethod
     def _validate_web_cookie(jsessionid: str) -> bool:
-        with httpx.Client(
-            timeout=30.0,
-            follow_redirects=True,
-            cookies={"JSESSIONID": jsessionid},
-        ) as web:
-            response = web.get("https://smartthingsfind.samsung.com/chkLogin.do")
-            return response.status_code == 200 and bool(response.headers.get("_csrf"))
+        if not jsessionid or not isinstance(jsessionid, str) or not jsessionid.strip():
+            return False
+        try:
+            with httpx.Client(
+                timeout=30.0,
+                follow_redirects=False,
+                cookies={"JSESSIONID": jsessionid.strip()},
+            ) as web:
+                response = web.get("https://smartthingsfind.samsung.com/chkLogin.do")
+                return response.status_code == 200 and bool(response.headers.get("_csrf"))
+        except Exception:
+            return False
 
     def _refresh_or_reissue(
         self,
@@ -428,7 +470,7 @@ class SamsungAuth:
 
         refresh = token.get("refresh_token")
         if refresh and auth_server:
-            response = self.http.post(
+            response = self._secret_post(
                 f"{auth_server}/auth/oauth2/token",
                 data={
                     "grant_type": "refresh_token",
@@ -485,18 +527,18 @@ class SamsungAuth:
             "scope": actual_kind.scope,
             "login_id": lgn_id,
         }
-        response = self.http.get(f"{auth_server}/auth/oauth2/v2/authorize", params=params)
+        response = self._authenticated_get(f"{auth_server}/auth/oauth2/v2/authorize", params=params)
         self._raise(response, f"{actual_kind.name} authorization")
         auth_data = response.json()
         code = auth_data.get("code")
         if not code and auth_data.get("privacyAccepted") == "N":
             params.pop("login_id", None)
-            response = self.http.get(f"{auth_server}/auth/oauth2/v2/authorize", params=params)
+            response = self._authenticated_get(f"{auth_server}/auth/oauth2/v2/authorize", params=params)
             self._raise(response, f"{actual_kind.name} authorization without login_id")
             code = response.json().get("code")
         if not code:
             raise AuthError(f"Samsung omitted the {actual_kind.name} authorization code")
-        response = self.http.post(
+        response = self._secret_post(
             f"{auth_server}/auth/oauth2/token",
             data={
                 "grant_type": "authorization_code",

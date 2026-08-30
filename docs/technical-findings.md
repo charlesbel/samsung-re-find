@@ -1,5 +1,7 @@
 # Technical findings and implementation status
 
+> **Disclaimer:** Unofficial reverse-engineered Samsung Find SDK, JSON CLI & MCP server. Not affiliated with, endorsed by, or supported by Samsung Electronics or SmartThings.
+
 This project combines published reverse-engineering work with additional live protocol testing. It is not affiliated with Samsung or SmartThings.
 
 ## Prior work
@@ -85,16 +87,15 @@ This is a frontend-derived capability model, not an official compatibility contr
 - Capability detection is based on coarse device categories.
 - The initial callback flow is easiest on a Linux desktop with `xdg-mime`.
 - Windows and macOS callback helpers are not implemented.
-- There is no long-running daemon, MCP server, or formal JSON Schema yet.
+- There is no long-running network daemon. Version 0.2.0 provides a local stdio MCP server and formal v1 JSON Schemas.
 
 ## Roadmap
 
-1. Add a stable JSON Schema and optional MCP server for agent frameworks.
-2. Add encrypted SmartTag location support with a separately audited key path.
-3. Add non-Linux callback helpers.
-4. Expand synthetic fixtures for watches, earbuds, tablets, and SmartTags.
-5. Add optional privacy-preserving output modes for coarse location.
-6. Add integration tests against recorded, fully redacted HTTP fixtures.
+1. Add encrypted SmartTag location support with a separately audited key path.
+2. Add non-Linux callback helpers.
+3. Expand synthetic fixtures for watches, earbuds, tablets, and SmartTags.
+4. Add optional privacy-preserving output modes for coarse location.
+5. Add integration tests against recorded, fully redacted HTTP fixtures.
 
 ## Sources
 

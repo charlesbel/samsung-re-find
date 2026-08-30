@@ -47,23 +47,31 @@ def _get_path_lock(lock_path: Path) -> _PathLock:
         return _path_locks[lock_path]
 
 
-def expand(path: str | Path) -> Path:
-    p = Path(path).expanduser()
-    _verify_no_symlink_components(p)
-    return p.resolve()
-
-
-def _get_o_nofollow() -> int:
-    return getattr(os, "O_NOFOLLOW", 0)
-
-
 def _verify_no_symlink_components(path: Path) -> None:
-    """Verify that neither the path nor any of its existing ancestor directories are symlinks."""
-    curr = path
-    while curr != curr.parent:
-        if curr.is_symlink():
-            raise SecurityError(f"Insecure state path: {curr.name} is a symlink")
+    """Verify that neither the path nor any existing ancestor directory is a symlink."""
+    raw_expanded = os.path.expanduser(str(path))
+    curr = Path(os.path.abspath(raw_expanded))
+    while True:
+        try:
+            st = os.lstat(curr)
+            if stat.S_ISLNK(st.st_mode):
+                raise SecurityError(f"Insecure state path: {curr.name} is a symlink")
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise SecurityError(f"Cannot verify path security for {curr}") from exc
+
+        if curr == curr.parent:
+            break
         curr = curr.parent
+
+
+def expand(path: str | Path) -> Path:
+    """Build an absolute lexical path without resolving symlinks and verify no symlink components."""
+    raw_expanded = os.path.expanduser(str(path))
+    abs_lexical = Path(os.path.abspath(raw_expanded))
+    _verify_no_symlink_components(abs_lexical)
+    return abs_lexical
 
 
 def _check_parent_dir(parent_path: Path, *, for_write: bool = False) -> None:
@@ -94,13 +102,10 @@ def _check_parent_dir(parent_path: Path, *, for_write: bool = False) -> None:
 
 @contextmanager
 def locked(path: str | Path) -> Iterator[None]:
-    target = Path(path).expanduser()
-    _verify_no_symlink_components(target)
+    target = expand(path)
+    _check_parent_dir(target.parent, for_write=True)
 
-    resolved = target.resolve()
-    _check_parent_dir(resolved.parent, for_write=True)
-
-    lock_path = resolved.with_suffix(resolved.suffix + ".lock")
+    lock_path = target.with_suffix(target.suffix + ".lock")
     _verify_no_symlink_components(lock_path)
 
     path_lock = _get_path_lock(lock_path)
@@ -155,21 +160,22 @@ def locked(path: str | Path) -> Iterator[None]:
             path_lock.rlock.release()
 
 
-def read_json(path: str | Path, *, required: bool = True) -> dict[str, Any]:
-    target = Path(path).expanduser()
-    _verify_no_symlink_components(target)
+def _get_o_nofollow() -> int:
+    return getattr(os, "O_NOFOLLOW", 0)
 
-    resolved = target.resolve()
-    if not resolved.exists():
+
+def read_json(path: str | Path, *, required: bool = True) -> dict[str, Any]:
+    target = expand(path)
+    if not target.exists():
         if required:
             raise FileNotFoundError(f"Required file not found: {target.name}")
         return {}
 
-    _check_parent_dir(resolved.parent, for_write=False)
+    _check_parent_dir(target.parent, for_write=False)
 
     flags = os.O_RDONLY | _get_o_nofollow()
     try:
-        fd = os.open(resolved, flags)
+        fd = os.open(target, flags)
     except OSError as exc:
         raise SecurityError(f"Cannot open state file securely: {target.name}") from exc
 
@@ -198,14 +204,12 @@ def read_json(path: str | Path, *, required: bool = True) -> dict[str, Any]:
 
 def atomic_write_text(path: str | Path, content: str, mode: int = 0o600) -> None:
     """Atomically write text to path with strict permissions and descriptor syncing."""
-    target = Path(path).expanduser()
-    _verify_no_symlink_components(target)
-
-    resolved = target.resolve()
-    _check_parent_dir(resolved.parent, for_write=True)
+    target = expand(path)
+    _check_parent_dir(target.parent, for_write=True)
 
     tmp_id = f"{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}"
-    tmp = resolved.with_name(f".{resolved.name}.{tmp_id}.tmp")
+    tmp = target.with_name(f".{target.name}.{tmp_id}.tmp")
+    _verify_no_symlink_components(tmp)
 
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | _get_o_nofollow()
     fd = os.open(tmp, flags, mode)
@@ -215,12 +219,12 @@ def atomic_write_text(path: str | Path, content: str, mode: int = 0o600) -> None
             handle.flush()
             os.fsync(handle.fileno())
 
-        os.replace(tmp, resolved)
+        os.replace(tmp, target)
 
         if hasattr(os, "O_DIRECTORY") and sys.platform != "win32":
             try:
                 dir_flags = os.O_RDONLY | os.O_DIRECTORY | _get_o_nofollow()
-                dir_fd = os.open(str(resolved.parent), dir_flags)
+                dir_fd = os.open(str(target.parent), dir_flags)
                 try:
                     os.fsync(dir_fd)
                 finally:
@@ -230,7 +234,7 @@ def atomic_write_text(path: str | Path, content: str, mode: int = 0o600) -> None
 
         if hasattr(os, "chmod") and sys.platform != "win32":
             with contextlib.suppress(OSError):
-                resolved.chmod(mode)
+                target.chmod(mode)
 
     except BaseException:
         with contextlib.suppress(OSError):
@@ -244,18 +248,15 @@ def atomic_write_json(path: str | Path, value: dict[str, Any], mode: int = 0o600
 
 
 def secure_read_raw_text(path: str | Path, *, consume: bool = False) -> str:
-    target = Path(path).expanduser()
-    _verify_no_symlink_components(target)
-
-    resolved = target.resolve()
-    if not resolved.exists():
+    target = expand(path)
+    if not target.exists():
         raise FileNotFoundError(f"File not found: {target.name}")
 
-    _check_parent_dir(resolved.parent, for_write=False)
+    _check_parent_dir(target.parent, for_write=False)
 
     flags = os.O_RDONLY | _get_o_nofollow()
     try:
-        fd = os.open(resolved, flags)
+        fd = os.open(target, flags)
     except OSError as exc:
         raise SecurityError(f"Cannot open file securely: {target.name}") from exc
 
@@ -275,7 +276,7 @@ def secure_read_raw_text(path: str | Path, *, consume: bool = False) -> str:
     finally:
         if consume:
             with contextlib.suppress(OSError):
-                resolved.unlink(missing_ok=True)
+                target.unlink(missing_ok=True)
 
     return value
 

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StatusResponseV1",
+  "type": "object",
+  "required": ["authenticated"],
+  "properties": {
+    "authenticated": { "type": "boolean" },
+    "user_id_present": { "type": "boolean" },
+    "device_id_present": { "type": "boolean" },
+    "find_token_present": { "type": "boolean" },
+    "iot_token_present": { "type": "boolean" }
+  }
+}

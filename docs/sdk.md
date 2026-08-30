@@ -1,11 +1,13 @@
 # Samsung Find Python SDK
 
-The `samsung_find` package provides a typed, synchronous Python SDK facade for interacting with Samsung SmartThings Find devices, location lookups, and device management.
+The `samsung_find` package (distributed as `samsung-re-find` on PyPI) provides a typed, synchronous Python SDK facade for interacting with Samsung SmartThings Find devices, location lookups, and device management.
+
+> **Disclaimer:** Unofficial reverse-engineered Samsung Find SDK, JSON CLI & MCP server. Not affiliated with, endorsed by, or supported by Samsung Electronics or SmartThings.
 
 ## Installation
 
 ```bash
-pip install samsung-find
+pip install samsung-re-find
 ```
 
 ## Basic Usage
@@ -37,7 +39,7 @@ with SamsungFindClient.from_config(config) as client:
 
     # 3. Check connectivity & battery
     status = client.check_connection("SmartTag2")
-    print(f"Reachable: {status.success}, Battery: {status.battery}%")
+    print(f"Reachable: {status.success}, Battery: {status.battery or 'unknown'}")
 
     # 4. Ring device or toggle tracking (active commands)
     ring_result = client.ring("SmartTag2", status="start")

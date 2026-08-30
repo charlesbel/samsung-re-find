@@ -23,11 +23,30 @@ class SamsungFindClient:
     ):
         if service is not None:
             self._service = service
-        elif config is not None:
-            self._service = FindService.from_config(config)
+        elif auth is not None:
+            cfg = config or FindConfig()
+            transport = _LegacyTransportClient(
+                auth,
+                country=cfg.country,
+                language=cfg.language,
+                timezone=cfg.timezone,
+            )
+            self._service = FindService(transport)
         else:
-            cfg = FindConfig()
-            transport = _LegacyTransportClient(auth or SamsungAuth(), config=cfg)
+            cfg = config or FindConfig()
+            auth_inst = SamsungAuth(
+                state_path=str(cfg.state_path),
+                pending_path=str(cfg.pending_path),
+                master_path=cfg.master_state_path,
+                legacy_state_path=cfg.legacy_state_path,
+                timeout=cfg.timeout_s,
+            )
+            transport = _LegacyTransportClient(
+                auth_inst,
+                country=cfg.country,
+                language=cfg.language,
+                timezone=cfg.timezone,
+            )
             self._service = FindService(transport)
 
     @classmethod

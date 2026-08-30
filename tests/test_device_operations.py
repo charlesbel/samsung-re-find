@@ -8,6 +8,7 @@ import pytest
 
 from samsung_find.api import SamsungFindClient
 from samsung_find.auth import SamsungAuthError
+from samsung_find.exceptions import DeviceNotFoundError
 
 
 class FakeResponse:
@@ -60,7 +61,7 @@ def test_resolve_device_matches_name_model_and_rejects_ambiguity():
         ]
     )
     assert client.resolve_device("SM-TEST1")["name"] == "Primary Galaxy Phone"
-    with pytest.raises(SamsungAuthError, match="ambiguous"):
+    with pytest.raises(DeviceNotFoundError, match="ambiguous"):
         client.resolve_device("Galaxy Phone")
 
 
@@ -72,6 +73,16 @@ def test_capabilities_are_conservative_for_phone():
     assert capabilities["continuous_tracking"] is True
     assert capabilities["remote_wipe"] == "discovered_not_exposed"
     assert capabilities["remote_lock"] == "discovered_not_exposed"
+
+
+def test_operation_result_mapping_never_confirms_unknown_and_accepts_track_terminal_code():
+    client = client_with_devices([phone()])
+
+    tracked = client._sanitize_operation({"oprnType": "TRACK_LOCATION_START", "oprnStsCd": "2100"})
+    unknown = client._sanitize_operation({"oprnType": "RING"})
+
+    assert tracked["result"] == "success"
+    assert unknown["result"] == "pending"
 
 
 def test_ring_sends_expected_payload_and_returns_sanitized_result(monkeypatch):

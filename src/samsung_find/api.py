@@ -13,16 +13,8 @@ import httpx
 
 from .auth import FIND, IOT, SamsungAuth, SamsungAuthError
 from .constants import SMARTTHINGS_APP_VERSION, SMARTTHINGS_USER_AGENT
-
-_ALLOWED_OPERATIONS = frozenset(
-    {
-        "CHECK_CONNECTION",
-        "LOCATION",
-        "RING",
-        "TRACK_LOCATION_START",
-        "TRACK_LOCATION_STOP",
-    }
-)
+from .exceptions import DeviceNotFoundError, SecurityError
+from .transport import _ALLOWED_OPERATIONS, SmartThingsTransport
 
 
 class SamsungFindClient:
@@ -41,7 +33,14 @@ class SamsungFindClient:
             self.timezone = ZoneInfo(timezone)
         except ZoneInfoNotFoundError as exc:
             raise ValueError(f"Unknown IANA timezone: {timezone}") from exc
-        self.http = httpx.Client(timeout=30.0, follow_redirects=True)
+        self.http = httpx.Client(timeout=30.0, follow_redirects=False)
+        self.transport = SmartThingsTransport(
+            token_getter=lambda force_refresh=False: self.auth.access_token(IOT, force_refresh=force_refresh),
+            timeout=30.0,
+            language=self.language,
+            country=self.country,
+            http_client=self.http,
+        )
         self._correlation = str(uuid.uuid4())
         self._user_uuid: str | None = None
         self._installed_app_id: str | None = None
@@ -61,6 +60,7 @@ class SamsungFindClient:
             state_path=str(cfg.state_path),
             pending_path=str(cfg.pending_path),
             master_path=cfg.master_state_path,
+            legacy_state_path=cfg.legacy_state_path,
             timeout=cfg.timeout_s,
         )
         return cls(
@@ -71,6 +71,7 @@ class SamsungFindClient:
         )
 
     def close(self) -> None:
+        self.transport.close()
         self.http.close()
 
     def _headers(self, *, force_refresh: bool = False) -> dict[str, str]:
@@ -87,13 +88,11 @@ class SamsungFindClient:
         }
 
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        from .transport import validate_smartthings_url
-
-        valid_url = validate_smartthings_url(str(url))
-        headers = kwargs.pop("headers", None) or self._headers()
-        response = self.http.request(method, valid_url, headers=headers, **kwargs)
-        if response.status_code in (401, 403) and method.upper() == "GET":
-            response = self.http.request(method, valid_url, headers=self._headers(force_refresh=True), **kwargs)
+        method_upper = method.upper()
+        if method_upper != "GET":
+            raise SecurityError("Generic authenticated mutation dispatch is forbidden")
+        params = kwargs.get("params")
+        response = self.transport.get(str(url), params=params)
         if not response.is_success:
             raise SamsungAuthError(f"SmartThings request failed with HTTP {response.status_code}")
         return response
@@ -124,7 +123,10 @@ class SamsungFindClient:
     def _ensure_user_uuid(self) -> str:
         if self._user_uuid:
             return self._user_uuid
-        data = self._request("GET", "https://auth.api.smartthings.com/users/me").json()
+        response = self.transport.get("https://auth.api.smartthings.com/users/me")
+        if not response.is_success:
+            raise SamsungAuthError(f"SmartThings user request failed with HTTP {response.status_code}")
+        data = response.json()
         value = data.get("uuid")
         if not value:
             raise SamsungAuthError("SmartThings user response omitted uuid")
@@ -134,18 +136,11 @@ class SamsungFindClient:
     def _ensure_installed_app(self) -> str:
         if self._installed_app_id:
             return self._installed_app_id
-        from .transport import validate_smartthings_url
 
         user_uuid = self._ensure_user_uuid()
         initial_url = "https://api.smartthings.com/installedapps?allowed=true"
-        url: str | None = initial_url
-        candidates: list[dict[str, Any]] = []
-        while url:
-            valid_url = validate_smartthings_url(url, base_url=initial_url)
-            data = self._request("GET", valid_url).json()
-            candidates.extend(data.get("items", []))
-            next_link = (data.get("_links") or {}).get("next") or {}
-            url = next_link.get("href")
+        candidates = self.transport.paginate(initial_url)
+
         plugin = "com.samsung.android.plugin.fme"
         selected = next(
             (
@@ -167,9 +162,13 @@ class SamsungFindClient:
     def _web_session(self) -> tuple[httpx.Client, str]:
         def create(force: bool) -> tuple[httpx.Client, str | None]:
             cookie = self.auth.web_session_cookie(force_refresh=force)
-            web = httpx.Client(timeout=30.0, follow_redirects=True, cookies={"JSESSIONID": cookie})
-            response = web.get("https://smartthingsfind.samsung.com/chkLogin.do")
-            return web, response.headers.get("_csrf") if response.status_code == 200 else None
+            web = httpx.Client(timeout=30.0, follow_redirects=False, cookies={"JSESSIONID": cookie})
+            try:
+                response = web.get("https://smartthingsfind.samsung.com/chkLogin.do")
+                return web, response.headers.get("_csrf") if response.status_code == 200 else None
+            except Exception:
+                web.close()
+                return web, None
 
         web, csrf = create(False)
         if not csrf:
@@ -206,6 +205,7 @@ class SamsungFindClient:
                     "name": name,
                     "model": item.get("modelID"),
                     "location_type": item.get("deviceTypeCode"),
+                    "device_type": item.get("deviceType"),
                     "user_id": item.get("usrId"),
                     "raw": item,
                 }
@@ -232,10 +232,10 @@ class SamsungFindClient:
         ]
         if not matches:
             names = ", ".join(str(device.get("name")) for device in devices)
-            raise SamsungAuthError(f"No device matched {query!r}. Available: {names}")
+            raise DeviceNotFoundError(f"No device matched {query!r}. Available: {names}")
         if len(matches) > 1:
             names = ", ".join(str(device.get("name")) for device in matches)
-            raise SamsungAuthError(f"Device query is ambiguous: {names}")
+            raise DeviceNotFoundError(f"Device query is ambiguous: {names}")
         return matches[0]
 
     def capabilities(self, query: str) -> dict[str, Any]:
@@ -245,52 +245,47 @@ class SamsungFindClient:
         track_types = {"PHONE", "TAB"}
         return {
             "device": {key: device.get(key) for key in ("name", "model", "location_type")},
+            "ring": device_type in ring_types,
+            "connection_check": True,
+            "continuous_tracking": device_type in track_types,
             "passive_location": True,
             "active_location": True,
-            "connection_check": True,
             "battery_status": True,
-            "ring": device_type in ring_types,
-            "continuous_tracking": device_type in track_types,
             "remote_lock": "discovered_not_exposed",
             "remote_wipe": "discovered_not_exposed",
         }
 
-    @staticmethod
-    def _operation_result_label(operation_type: Any, status: Any, result: Any) -> str:
-        if str(operation_type) == "TRACK_LOCATION_START" and str(status) == "2100":
-            return "success"
-        if str(status) == "2800" and str(result) == "1200":
-            return "success"
-        if str(status) in {"1000", "2100"}:
-            return "in_progress"
-        if str(status) in {"1900", "2900", "01", "02"}:
-            return "failed"
-        return "unknown"
-
-    def _sanitize_operation(self, operation: dict[str, Any]) -> dict[str, Any]:
-        battery = operation.get("battery")
-        try:
-            battery = int(battery) if battery is not None else None
-        except (TypeError, ValueError):
-            battery = None
-        result = {
-            "type": operation.get("oprnType"),
-            "status_code": operation.get("oprnStsCd"),
-            "result_code": operation.get("oprnResultCode"),
-            "result": self._operation_result_label(
-                operation.get("oprnType"), operation.get("oprnStsCd"), operation.get("oprnResultCode")
-            ),
-            "battery_percent": battery,
+    def _sanitize_operation(self, raw: dict[str, Any]) -> dict[str, Any]:
+        status_code_raw = raw.get("status_code") or raw.get("oprnStsCd") or raw.get("statusCode")
+        result_code_raw = raw.get("result_code") or raw.get("oprnResultCode") or raw.get("resultCode")
+        status_code = str(status_code_raw) if status_code_raw is not None else None
+        result_code = str(result_code_raw) if result_code_raw is not None else None
+        operation_type = str(raw.get("oprnType") or raw.get("type") or "")
+        battery = raw.get("battery_percent") or raw.get("battery")
+        battery_val = None
+        if battery is not None:
+            with suppress(ValueError, TypeError):
+                battery_val = int(battery)
+        result = "pending"
+        if (
+            (operation_type == "TRACK_LOCATION_START" and status_code == "2100")
+            or (status_code == "2800" and result_code == "1200")
+            or status_code in {"200", "SUCCESS", "00"}
+        ):
+            result = "success"
+        elif status_code in {"1000", "1100", "2100", "PENDING", "IN_PROGRESS", "RUNNING"}:
+            result = "pending"
+        elif status_code:
+            result = "failed"
+        return {
+            "type": operation_type or None,
+            "status": raw.get("status"),
+            "status_code": status_code,
+            "result_code": result_code,
+            "result": result,
+            "battery_percent": battery_val,
+            "message": raw.get("message") or raw.get("detail"),
         }
-        for source, destination in (("oprnCrtDate", "created_at"), ("oprnDoneDate", "completed_at")):
-            value = operation.get(source)
-            if value:
-                try:
-                    timestamp = datetime.strptime(str(value), "%Y%m%d%H%M%S").replace(tzinfo=ZoneInfo("UTC"))
-                    result[destination] = timestamp.astimezone(self.timezone).isoformat()
-                except ValueError:
-                    pass
-        return result
 
     def _perform_operation(
         self,

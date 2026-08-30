@@ -1,6 +1,8 @@
 # Persistent authentication design
 
-This document describes the authentication architecture implemented by `samsung-find`. The APIs are unofficial and can change without notice.
+This document describes the authentication architecture implemented by `samsung-re-find`.
+
+> **Disclaimer:** Unofficial reverse-engineered Samsung Find SDK, JSON CLI & MCP server. Not affiliated with, endorsed by, or supported by Samsung Electronics or SmartThings. The APIs are unofficial and can change without notice.
 
 ## Why a browser cookie is not enough
 
@@ -67,10 +69,10 @@ The client validates every cached web cookie before use. An invalid cookie is di
 Default files:
 
 ```text
-~/.config/samsung-find/state.json
-~/.config/samsung-find/state.json.lock
-~/.config/samsung-find/pending.json
-~/.config/samsung-find/redirect.uri
+~/.config/samsung-account/master.json
+~/.local/state/samsung-find/state.json
+~/.local/state/samsung-find/pending.json
+~/.local/state/samsung-find/redirect.uri
 ```
 
 Security properties:
@@ -87,16 +89,16 @@ Do not copy `state.json` between machines or commit it to source control.
 ## Bootstrap sequence
 
 ```bash
-samsung-find install-handler
-samsung-find auth-start --country us --locale en-US
+samsung-re-find install-handler
+samsung-re-find auth-start --country us --locale en-US
 ```
 
 Open the returned login URL in a desktop browser. Complete Samsung Account authentication. The installed private URI handler stores the callback in the private redirect file. Then run:
 
 ```bash
-samsung-find auth-complete
-samsung-find status
-samsung-find verify
+samsung-re-find auth-complete
+samsung-re-find status
+samsung-re-find verify
 ```
 
 If the desktop cannot register `ms-app://`, capture the complete redirect URI from browser developer tools and write it directly to the configured callback file with mode `0600`, then run `auth-complete`. Never paste that URI into an issue, chat transcript, or shell history.

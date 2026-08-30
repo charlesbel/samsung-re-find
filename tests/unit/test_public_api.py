@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock
 
 from samsung_find import (
+    FIND_REQUESTER_NAME,
+    FIND_REQUESTER_TOKEN,
     Device,
     DeviceCapabilities,
     FindConfig,
@@ -32,6 +34,8 @@ def test_public_imports_available_at_root():
     assert AuthError is not None
     assert SecurityError is not None
     assert DeviceNotFoundError is not None
+    assert FIND_REQUESTER_NAME == "FIND_MY_MOBILE"
+    assert FIND_REQUESTER_TOKEN == "b47285ea-2615-46eb-a1d2-28e4e94119d8"
 
 
 def test_models_repr_does_not_leak_secrets_or_ids():
@@ -247,3 +251,44 @@ def test_facade_context_manager_closes_resources():
         assert client is not None
 
     fake_service.close.assert_called_once()
+
+
+def test_facade_constructors_and_location_redaction(tmp_path):
+    # 1. LocationResult repr/str redacts sensitive info
+    loc = LocationResult(
+        latitude=48.8566,
+        longitude=2.3522,
+        accuracy_m=10.0,
+        timestamp="2026-08-30T12:00:00+00:00",
+        map_url="https://maps.google.com/?q=48.8566,2.3522",
+    )
+    for text in (repr(loc), str(loc)):
+        assert "48.8566" not in text
+        assert "2.3522" not in text
+        assert "maps.google.com" not in text
+        assert "2026-08-30" not in text
+        assert "[REDACTED]" in text
+
+    # 2. Constructor with auth
+    from samsung_find.auth import SamsungAuth
+
+    auth = SamsungAuth(state_path=tmp_path / "state.json", master_path=tmp_path / "master.json")
+    client_auth = SamsungFindClient(auth=auth)
+    assert client_auth is not None
+    client_auth.close()
+
+    # 3. Constructor with config
+    config = FindConfig(country="FR", language="fr", timezone="Europe/Paris")
+    client_cfg = SamsungFindClient(config=config)
+    assert client_cfg is not None
+    client_cfg.close()
+
+    # 4. Constructor default
+    client_def = SamsungFindClient()
+    assert client_def is not None
+    client_def.close()
+
+    # 5. Constructor from_config
+    client_from_cfg = SamsungFindClient.from_config(config)
+    assert client_from_cfg is not None
+    client_from_cfg.close()

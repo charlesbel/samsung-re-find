@@ -1,0 +1,20 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Samsung public installed-app requester identifier, not a credential"
+regexTarget = "line"
+regexes = ['''"requesterToken":\s*"[0-9a-f-]{36}"''']
+paths = ['''^src/samsung_find/transport\.py$''']
+
+[[allowlists]]
+description = "Samsung public requester protocol constant and its exact contract assertion"
+regexTarget = "line"
+regexes = [
+  '''^FIND_REQUESTER_TOKEN\s*=\s*"[0-9a-f-]{36}"$''',
+  '''^\s*assert\s+FIND_REQUESTER_TOKEN\s*==\s*"[0-9a-f-]{36}"$''',
+]
+paths = [
+  '''^src/samsung_find/constants\.py$''',
+  '''^tests/unit/test_public_api\.py$''',
+]
