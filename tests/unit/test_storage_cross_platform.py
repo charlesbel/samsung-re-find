@@ -1,6 +1,7 @@
 import concurrent.futures
 import json
 import multiprocessing
+import os
 import stat
 import sys
 from pathlib import Path
@@ -83,6 +84,68 @@ def test_read_json_fails_closed_on_insecure_permissions(tmp_path):
     # Must NOT have silently chmodded the file
     current_mode = stat.S_IMODE(target.stat().st_mode)
     assert current_mode == 0o644, "File should remain 0644; should fail closed without altering attacker file"
+
+
+def test_insecure_lock_file_fails_closed(tmp_path):
+    if sys.platform == "win32":
+        pytest.skip("POSIX permissions not applicable on Windows")
+
+    target = tmp_path / "state.json"
+    lock_file = tmp_path / "state.json.lock"
+    lock_file.write_text("", encoding="utf-8")
+    lock_file.chmod(0o666)  # Insecure lock permissions
+
+    with pytest.raises(SecurityError) as exc_info, locked(target):
+        pass
+    assert "Insecure" in str(exc_info.value) or "mode" in str(exc_info.value) or "permission" in str(exc_info.value)
+    assert stat.S_IMODE(lock_file.stat().st_mode) == 0o666
+
+
+def test_insecure_parent_directory_fails_closed_on_read_and_write(tmp_path):
+    if sys.platform == "win32":
+        pytest.skip("POSIX permissions not applicable on Windows")
+
+    parent_dir = tmp_path / "insecure_dir"
+    parent_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+    os.chmod(parent_dir, 0o755)  # Group/other readable/executable
+
+    target = parent_dir / "data.json"
+    target.write_text(json.dumps({"a": "b"}), encoding="utf-8")
+    os.chmod(target, 0o600)
+
+    # Read should fail closed because parent dir is 0755
+    with pytest.raises(SecurityError) as exc_read:
+        read_json(target)
+    assert "Insecure" in str(exc_read.value) or "parent" in str(exc_read.value) or "directory" in str(exc_read.value)
+
+    # Write should fail closed because existing parent dir is 0755
+    with pytest.raises(SecurityError) as exc_write:
+        atomic_write_json(target, {"a": "c"})
+    assert "Insecure" in str(exc_write.value) or "parent" in str(exc_write.value) or "directory" in str(exc_write.value)
+
+    # Parent mode must not have been silently changed
+    assert stat.S_IMODE(parent_dir.stat().st_mode) == 0o755
+
+
+def test_symlink_parent_directory_rejection(tmp_path):
+    real_parent = tmp_path / "real_dir"
+    real_parent.mkdir(mode=0o700)
+
+    symlink_parent = tmp_path / "symlink_dir"
+    try:
+        symlink_parent.symlink_to(real_parent)
+    except OSError:
+        pytest.skip("Symlinks not supported on this platform")
+
+    target = symlink_parent / "state.json"
+    with pytest.raises(SecurityError):
+        read_json(target, required=False)
+
+    with pytest.raises(SecurityError):
+        atomic_write_json(target, {"key": "val"})
+
+    with pytest.raises(SecurityError), locked(target):
+        pass
 
 
 def test_symlink_rejection(tmp_path):

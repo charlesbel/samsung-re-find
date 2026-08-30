@@ -48,19 +48,31 @@ def _get_path_lock(lock_path: Path) -> _PathLock:
 
 
 def expand(path: str | Path) -> Path:
-    return Path(path).expanduser().resolve()
+    p = Path(path).expanduser()
+    _verify_no_symlink_components(p)
+    return p.resolve()
 
 
 def _get_o_nofollow() -> int:
     return getattr(os, "O_NOFOLLOW", 0)
 
 
-def _check_parent_dir(parent_path: Path, *, for_write: bool = False) -> None:
-    if sys.platform == "win32":
-        return
+def _verify_no_symlink_components(path: Path) -> None:
+    """Verify that neither the path nor any of its existing ancestor directories are symlinks."""
+    curr = path
+    while curr != curr.parent:
+        if curr.is_symlink():
+            raise SecurityError(f"Insecure state path: {curr.name} is a symlink")
+        curr = curr.parent
 
-    if parent_path.is_symlink():
-        raise SecurityError(f"Insecure directory: {parent_path.name} is a symlink")
+
+def _check_parent_dir(parent_path: Path, *, for_write: bool = False) -> None:
+    _verify_no_symlink_components(parent_path)
+
+    if sys.platform == "win32":
+        if not parent_path.exists() and for_write:
+            parent_path.mkdir(parents=True, exist_ok=True)
+        return
 
     if not parent_path.exists():
         if for_write:
@@ -75,27 +87,21 @@ def _check_parent_dir(parent_path: Path, *, for_write: bool = False) -> None:
 
     parent_mode = stat.S_IMODE(parent_stat.st_mode)
     if parent_mode & 0o077 != 0:
-        if for_write:
-            try:
-                parent_path.chmod(0o700)
-            except OSError as exc:
-                raise SecurityError("Failed to enforce private directory permissions (0700)") from exc
-        else:
-            raise SecurityError("Insecure directory permissions: parent directory must be mode 0700")
+        raise SecurityError(
+            f"Insecure directory permissions on {parent_path.name}: mode is 0{parent_mode:o}, must be 0700"
+        )
 
 
 @contextmanager
 def locked(path: str | Path) -> Iterator[None]:
     target = Path(path).expanduser()
-    if target.is_symlink():
-        raise SecurityError(f"Rejected locking on symlink: {target.name}")
+    _verify_no_symlink_components(target)
 
     resolved = target.resolve()
     _check_parent_dir(resolved.parent, for_write=True)
 
     lock_path = resolved.with_suffix(resolved.suffix + ".lock")
-    if lock_path.is_symlink():
-        raise SecurityError(f"Rejected lock file symlink: {lock_path.name}")
+    _verify_no_symlink_components(lock_path)
 
     path_lock = _get_path_lock(lock_path)
     path_lock.rlock.acquire()
@@ -115,6 +121,12 @@ def locked(path: str | Path) -> Iterator[None]:
                 if hasattr(os, "getuid") and st.st_uid != os.getuid():
                     os.close(fd)
                     raise SecurityError("Lock file is not owned by current user")
+                file_mode = stat.S_IMODE(st.st_mode)
+                if file_mode & 0o077 != 0:
+                    os.close(fd)
+                    raise SecurityError(
+                        f"Insecure lock file permissions on {lock_path.name}: mode is 0{file_mode:o}, must be 0600"
+                    )
 
             # Process-level locking
             if fcntl is not None:
@@ -145,8 +157,7 @@ def locked(path: str | Path) -> Iterator[None]:
 
 def read_json(path: str | Path, *, required: bool = True) -> dict[str, Any]:
     target = Path(path).expanduser()
-    if target.is_symlink():
-        raise SecurityError(f"Rejected reading from symlink: {target.name}")
+    _verify_no_symlink_components(target)
 
     resolved = target.resolve()
     if not resolved.exists():
@@ -187,8 +198,7 @@ def read_json(path: str | Path, *, required: bool = True) -> dict[str, Any]:
 
 def atomic_write_json(path: str | Path, value: dict[str, Any]) -> None:
     target = Path(path).expanduser()
-    if target.is_symlink():
-        raise SecurityError(f"Refusing to write to symlink: {target.name}")
+    _verify_no_symlink_components(target)
 
     resolved = target.resolve()
     _check_parent_dir(resolved.parent, for_write=True)
@@ -231,8 +241,7 @@ def atomic_write_json(path: str | Path, value: dict[str, Any]) -> None:
 
 def secure_read_text(path: str | Path) -> str:
     target = Path(path).expanduser()
-    if target.is_symlink():
-        raise SecurityError(f"Rejected reading from symlink: {target.name}")
+    _verify_no_symlink_components(target)
 
     resolved = target.resolve()
     if not resolved.exists():
