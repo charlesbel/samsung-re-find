@@ -48,6 +48,29 @@ class SamsungFindClient:
         self._user_uuid: str | None = None
         self._installed_app_id: str | None = None
 
+    def __enter__(self) -> SamsungFindClient:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+
+    @classmethod
+    def from_config(cls, config: Any = None) -> SamsungFindClient:
+        from .config import FindConfig
+        cfg = config or FindConfig()
+        auth = SamsungAuth(
+            state_path=str(cfg.state_path),
+            pending_path=str(cfg.pending_path),
+            master_path=cfg.master_state_path,
+            timeout=cfg.timeout_s,
+        )
+        return cls(
+            auth,
+            country=cfg.country,
+            language=cfg.language,
+            timezone=cfg.timezone,
+        )
+
     def close(self) -> None:
         self.http.close()
 
