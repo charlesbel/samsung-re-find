@@ -9,7 +9,7 @@ This document describes the release process for `samsung-re-find`.
 - Distribution: `samsung-re-find`
 - Python import: `samsung_find`
 - Canonical executables: `samsung-re-find`, `samsung-re-find-mcp`
-- Trigger: a pushed tag exactly matching `v{project.version}`
+- Trigger: a pushed tag exactly matching `{project.version}`
 - Publisher: GitHub Actions OIDC through PyPI Trusted Publishing
 - GitHub environment: `pypi`
 
@@ -34,7 +34,7 @@ Also run `actionlint`, Gitleaks with redaction against the working tree and comp
 
 ## Automated Release Flow
 
-`.github/workflows/release.yml` runs only for pushed `v*` tags:
+`.github/workflows/release.yml` runs for pushed numeric SemVer tags. A manual dispatch can recover an existing immutable tag through the required `release_tag` input; it checks out that tag and verifies that it points to the tested commit.
 
 1. **`verify-and-build`** checks tag/version equality, installs release dependencies, runs Ruff, both test modes, `pip-audit`, full-history Gitleaks, builds wheel/sdist, runs strict Twine checks, inspects archives, and smoke-tests the installed wheel and MCP server.
 2. **`publish-pypi`** runs only after verification. It downloads the exact verified artifacts and publishes them to PyPI using Trusted Publishing in the `pypi` environment.
@@ -59,8 +59,8 @@ The GitHub repository must also contain an environment named `pypi`. Optional en
 After the release commit is on `main`, all CI checks are green, and the pending publisher is configured:
 
 ```bash
-git tag -a v0.2.0 -m "Release v0.2.0"
-git push origin v0.2.0
+git tag -a 0.2.0 -m "samsung-re-find 0.2.0"
+git push origin 0.2.0
 ```
 
 Do not upload the same artifacts manually while the workflow is running. PyPI distributions are immutable; if publication partially succeeds, inspect PyPI and the workflow before retrying. Never delete and recreate a tag that has already produced public artifacts.
@@ -72,5 +72,5 @@ Verify independently:
 1. the PyPI JSON endpoint reports version `0.2.0` and both artifacts;
 2. a fresh environment can install `samsung-re-find[mcp]==0.2.0` from PyPI;
 3. canonical CLI/MCP help and stdio negotiation work;
-4. GitHub shows a non-draft `v0.2.0` release with matching assets;
+4. GitHub shows a non-draft `0.2.0` release with matching assets;
 5. repository links and README badges resolve to the renamed public repository.
