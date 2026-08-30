@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/charlesbel/samsung-find/main/schemas/master-state-v1.schema.json",
   "title": "SamsungAccountMasterStateV1",
-  "description": "Shared Samsung Account master authentication state contract (v1)",
+  "description": "Neutral Samsung Account master authentication state contract (v1)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -29,10 +29,12 @@
       "minLength": 1
     },
     "created_at": {
-      "type": "number"
+      "type": "number",
+      "minimum": 0
     },
     "updated_at": {
-      "type": "number"
+      "type": "number",
+      "minimum": 0
     },
     "account": {
       "type": "object",
@@ -62,15 +64,12 @@
     "identity": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "auth_server_url",
-        "userauth_token"
-      ],
+      "required": ["auth_server_url", "userauth_token"],
       "properties": {
         "auth_server_url": {
           "type": "string",
           "format": "uri",
-          "pattern": "^https://[a-zA-Z0-9.-]+\\.(samsungosp\\.com|account\\.samsung\\.com)(:[0-9]+)?(/.*)?$"
+          "pattern": "^https://(?:(?:[A-Za-z0-9-]+\\.)*samsungosp\\.com|account\\.samsung\\.com)/?$"
         },
         "userauth_token": {
           "type": "string",

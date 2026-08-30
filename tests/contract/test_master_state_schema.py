@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -7,9 +8,30 @@ import pytest
 SCHEMA_PATH = Path(__file__).parent.parent.parent / "schemas" / "master-state-v1.schema.json"
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
+CANONICAL_SCHEMA_SHA256 = "c4cc1c62937200fbb95d2def0b39f3aa4db61ac2cc761a6bbb4591cca3a8c183"
+CANONICAL_FIXTURE_SHA256 = "3381a2b1b4d4bda636c4364d0896cdba5bb2bfbf00f3b459ec559ad673dd0dca"
+
 
 def test_schema_file_exists():
     assert SCHEMA_PATH.is_file(), f"Schema file not found at {SCHEMA_PATH}"
+
+
+def test_canonical_shared_contract_digests():
+    assert SCHEMA_PATH.is_file(), f"Schema file not found at {SCHEMA_PATH}"
+    schema_bytes = SCHEMA_PATH.read_bytes()
+    schema_hash = hashlib.sha256(schema_bytes).hexdigest()
+    assert schema_hash == CANONICAL_SCHEMA_SHA256, (
+        f"master-state-v1.schema.json SHA-256 mismatch: got {schema_hash}, expected {CANONICAL_SCHEMA_SHA256}"
+    )
+
+    fixture_file = FIXTURES_DIR / "master-state-v1.synthetic.json"
+    assert fixture_file.is_file(), f"Synthetic fixture not found at {fixture_file}"
+    fixture_bytes = fixture_file.read_bytes()
+    fixture_hash = hashlib.sha256(fixture_bytes).hexdigest()
+    # Do not print fixture contents on failure
+    assert fixture_hash == CANONICAL_FIXTURE_SHA256, (
+        f"master-state-v1.synthetic.json SHA-256 mismatch: got {fixture_hash}, expected {CANONICAL_FIXTURE_SHA256}"
+    )
 
 
 @pytest.fixture
