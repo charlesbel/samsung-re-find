@@ -1,6 +1,6 @@
 # Persistent authentication design
 
-This document describes the authentication architecture implemented by `samsung-find-agent`. The APIs are unofficial and can change without notice.
+This document describes the authentication architecture implemented by `samsung-find`. The APIs are unofficial and can change without notice.
 
 ## Why a browser cookie is not enough
 
