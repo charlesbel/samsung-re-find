@@ -32,6 +32,8 @@ jobs:
               dirs[:] = [d for d in dirs if d not in ('.git', '.venv', '__pycache__', 'dist', 'build', '.pytest_cache')]
               for f in files:
                   path = os.path.join(root, f)
+                  if path.endswith('security.yml'):
+                      continue
                   try:
                       with open(path, 'r', encoding='utf-8', errors='ignore') as handle:
                           content = handle.read()

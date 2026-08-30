@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
-from .api import SamsungFindClient
+from .client import SamsungFindClient
 from .config import FindConfig
 from .credentials import MasterState, MasterStateStore, resolve_master_state_path
 from .exceptions import (

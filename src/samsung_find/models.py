@@ -10,12 +10,11 @@ from typing import Any
 class Device:
     """Represents a Samsung device or tag discovered via Samsung Find."""
 
-    id: str
     name: str
+    id: str | None = None
     model: str | None = None
     location_type: str | None = None
     device_type: str | None = None
-    raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def __repr__(self) -> str:
         return (
@@ -30,7 +29,7 @@ class Device:
             "location_type": self.location_type,
             "device_type": self.device_type,
         }
-        if include_id:
+        if include_id and self.id is not None:
             data["id"] = self.id
         return data
 
@@ -45,7 +44,6 @@ class DeviceCapabilities:
     can_check_connection: bool = False
     offline_finding: bool = False
     features: list[str] = field(default_factory=list)
-    raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,15 +60,14 @@ class DeviceCapabilities:
 class LocationResult:
     """Location coordinate and status report for a device."""
 
-    latitude: float
-    longitude: float
+    latitude: float | None = None
+    longitude: float | None = None
     accuracy_m: float | None = None
     timestamp: str | None = None
-    is_fresh: bool = True
-    is_precise: bool = True
+    is_fresh: bool = False
+    is_precise: bool = False
     address: str | None = None
     map_url: str | None = None
-    raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -95,7 +92,6 @@ class OperationResult:
     status_code: str | None = None
     message: str | None = None
     battery: str | None = None
-    details: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -107,6 +103,4 @@ class OperationResult:
         }
         if self.battery is not None:
             data["battery"] = self.battery
-        if self.details:
-            data["details"] = self.details
         return data

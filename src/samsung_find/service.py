@@ -4,20 +4,38 @@ from __future__ import annotations
 
 from typing import Any
 
-from .api import SamsungFindClient
+from .api import SamsungFindClient as _LegacyTransportClient
 from .config import FindConfig
 from .models import Device, DeviceCapabilities, LocationResult, OperationResult
+
+
+def _parse_coordinate(val: Any) -> float | None:
+    if val is None or val == "":
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_float(val: Any) -> float | None:
+    if val is None or val == "":
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
 
 
 class FindService:
     """Service layer exposing typed domain operations."""
 
-    def __init__(self, client: SamsungFindClient):
+    def __init__(self, client: _LegacyTransportClient):
         self.client = client
 
     @classmethod
     def from_config(cls, config: FindConfig | None = None) -> FindService:
-        client = SamsungFindClient.from_config(config)
+        client = _LegacyTransportClient.from_config(config)
         return cls(client)
 
     def close(self) -> None:
@@ -29,18 +47,17 @@ class FindService:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.close()
 
-    def list_devices(self) -> list[Device]:
+    def list_devices(self, *, include_ids: bool = False) -> list[Device]:
         raw_devices = self.client.devices()
         results: list[Device] = []
         for d in raw_devices:
             results.append(
                 Device(
-                    id=str(d.get("id", "")),
                     name=str(d.get("name", "Unknown")),
+                    id=str(d.get("id")) if include_ids and d.get("id") is not None else None,
                     model=d.get("model"),
                     location_type=d.get("location_type"),
                     device_type=d.get("device_type"),
-                    raw=d,
                 )
             )
         return results
@@ -54,35 +71,32 @@ class FindService:
             can_check_connection=bool(raw_cap.get("check_connection")),
             offline_finding=bool(raw_cap.get("offline_finding")),
             features=list(raw_cap.get("features") or []),
-            raw=raw_cap,
         )
 
     def get_last_location(self, query: str) -> LocationResult:
         raw_loc = self.client.locate(query, active=False)
         return LocationResult(
-            latitude=float(raw_loc.get("latitude", 0.0)),
-            longitude=float(raw_loc.get("longitude", 0.0)),
-            accuracy_m=float(raw_loc["accuracy_m"]) if raw_loc.get("accuracy_m") is not None else None,
+            latitude=_parse_coordinate(raw_loc.get("latitude")),
+            longitude=_parse_coordinate(raw_loc.get("longitude")),
+            accuracy_m=_parse_float(raw_loc.get("accuracy_m")),
             timestamp=raw_loc.get("timestamp"),
-            is_fresh=bool(raw_loc.get("is_fresh", True)),
-            is_precise=bool(raw_loc.get("is_precise", True)),
+            is_fresh=bool(raw_loc.get("is_fresh", False)),
+            is_precise=bool(raw_loc.get("is_precise", False)),
             address=raw_loc.get("address"),
             map_url=raw_loc.get("map_url"),
-            raw=raw_loc,
         )
 
     def request_location(self, query: str, poll_seconds: int = 180) -> LocationResult:
         raw_loc = self.client.locate(query, active=True, poll_seconds=poll_seconds)
         return LocationResult(
-            latitude=float(raw_loc.get("latitude", 0.0)),
-            longitude=float(raw_loc.get("longitude", 0.0)),
-            accuracy_m=float(raw_loc["accuracy_m"]) if raw_loc.get("accuracy_m") is not None else None,
+            latitude=_parse_coordinate(raw_loc.get("latitude")),
+            longitude=_parse_coordinate(raw_loc.get("longitude")),
+            accuracy_m=_parse_float(raw_loc.get("accuracy_m")),
             timestamp=raw_loc.get("timestamp"),
             is_fresh=bool(raw_loc.get("is_fresh", True)),
             is_precise=bool(raw_loc.get("is_precise", True)),
             address=raw_loc.get("address"),
             map_url=raw_loc.get("map_url"),
-            raw=raw_loc,
         )
 
     def check_connection(self, query: str, poll_seconds: int = 40) -> OperationResult:
@@ -94,7 +108,6 @@ class FindService:
             status_code=raw_op.get("status_code"),
             message=raw_op.get("message"),
             battery=str(raw_op.get("battery")) if raw_op.get("battery") is not None else None,
-            details=raw_op,
         )
 
     def ring(
@@ -112,10 +125,9 @@ class FindService:
             request_id=raw_op.get("request_id"),
             status_code=raw_op.get("status_code"),
             message=raw_op.get("message"),
-            details=raw_op,
         )
 
-    def set_tracking(self, query: str, enabled: bool, poll_seconds: int = 30) -> OperationResult:
+    def set_tracking(self, query: str, *, enabled: bool = True, poll_seconds: int = 30) -> OperationResult:
         raw_op = self.client.track(query, enabled=enabled, poll_seconds=poll_seconds)
         return OperationResult(
             operation="TRACK_LOCATION_START" if enabled else "TRACK_LOCATION_STOP",
@@ -123,5 +135,4 @@ class FindService:
             request_id=raw_op.get("request_id"),
             status_code=raw_op.get("status_code"),
             message=raw_op.get("message"),
-            details=raw_op,
         )

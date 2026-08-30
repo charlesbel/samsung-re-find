@@ -100,17 +100,18 @@ from samsung_find import FindConfig, SamsungFindClient
 config = FindConfig(timezone="UTC")
 
 with SamsungFindClient.from_config(config) as client:
-    # List all registered devices
-    for device in client.devices():
-        print(f"{device['name']} ({device.get('model', 'Unknown')})")
+    # List all registered devices (IDs masked by default)
+    for device in client.list_devices():
+        print(f"{device.name} ({device.model or 'Unknown'})")
 
     # Get passive GPS fix (last known)
-    loc = client.locate("Galaxy S24", active=False)
-    print(f"Location: {loc['latitude']}, {loc['longitude']} (fresh: {loc['is_fresh']})")
+    loc = client.get_last_location("Galaxy S24")
+    if loc.latitude is not None:
+        print(f"Location: {loc.latitude}, {loc.longitude} (fresh: {loc.is_fresh})")
 
     # Check connection and battery
     status = client.check_connection("SmartTag2")
-    print(f"Battery: {status.get('battery')}%")
+    print(f"Reachable: {status.success}, Battery: {status.battery}%")
 ```
 
 ---
