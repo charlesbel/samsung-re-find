@@ -1,0 +1,18 @@
+{
+  "schema": "io.github.charlesbel.samsung-account.master",
+  "schema_version": 1,
+  "generation": "synthetic-gen-00000000-0000-0000-0000-000000000001",
+  "created_at": 1772370000.0,
+  "updated_at": 1772370000.0,
+  "account": {
+    "login_id": "synthetic-test-user@example.com",
+    "user_id": "synthetic-user-id-12345"
+  },
+  "installation": {
+    "physical_address": "AA:BB:CC:DD:EE:FF"
+  },
+  "identity": {
+    "auth_server_url": "https://auth.samsungosp.com",
+    "userauth_token": "synthetic_userauth_token_for_testing_purposes_only"
+  }
+}

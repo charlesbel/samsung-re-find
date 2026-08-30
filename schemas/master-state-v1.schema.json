@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/charlesbel/samsung-find/main/schemas/master-state-v1.schema.json",
+  "title": "SamsungAccountMasterStateV1",
+  "description": "Shared Samsung Account master authentication state contract (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "generation",
+    "created_at",
+    "updated_at",
+    "account",
+    "installation",
+    "identity"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "io.github.charlesbel.samsung-account.master"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "generation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "number"
+    },
+    "updated_at": {
+      "type": "number"
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["login_id"],
+      "properties": {
+        "login_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "user_id": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "installation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["physical_address"],
+      "properties": {
+        "physical_address": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "auth_server_url",
+        "userauth_token"
+      ],
+      "properties": {
+        "auth_server_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://[a-zA-Z0-9.-]+\\.(samsungosp\\.com|account\\.samsung\\.com)(:[0-9]+)?(/.*)?$"
+        },
+        "userauth_token": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
