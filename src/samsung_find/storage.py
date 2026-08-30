@@ -132,7 +132,7 @@ def locked(path: str | Path) -> Iterator[None]:
             if fcntl is not None:
                 fcntl.flock(fd, fcntl.LOCK_EX)
             elif msvcrt is not None:
-                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                msvcrt.locking(fd, msvcrt.LOCK_EX)
 
             path_lock.fd = fd
 
@@ -196,7 +196,8 @@ def read_json(path: str | Path, *, required: bool = True) -> dict[str, Any]:
     return value
 
 
-def atomic_write_json(path: str | Path, value: dict[str, Any]) -> None:
+def atomic_write_text(path: str | Path, content: str, mode: int = 0o600) -> None:
+    """Atomically write text to path with strict permissions and descriptor syncing."""
     target = Path(path).expanduser()
     _verify_no_symlink_components(target)
 
@@ -207,17 +208,15 @@ def atomic_write_json(path: str | Path, value: dict[str, Any]) -> None:
     tmp = resolved.with_name(f".{resolved.name}.{tmp_id}.tmp")
 
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | _get_o_nofollow()
-    fd = os.open(tmp, flags, 0o600)
+    fd = os.open(tmp, flags, mode)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\n")
+            handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
 
         os.replace(tmp, resolved)
 
-        # Sync parent directory descriptor where supported
         if hasattr(os, "O_DIRECTORY") and sys.platform != "win32":
             try:
                 dir_flags = os.O_RDONLY | os.O_DIRECTORY | _get_o_nofollow()
@@ -231,7 +230,7 @@ def atomic_write_json(path: str | Path, value: dict[str, Any]) -> None:
 
         if hasattr(os, "chmod") and sys.platform != "win32":
             with contextlib.suppress(OSError):
-                resolved.chmod(0o600)
+                resolved.chmod(mode)
 
     except BaseException:
         with contextlib.suppress(OSError):
@@ -239,7 +238,12 @@ def atomic_write_json(path: str | Path, value: dict[str, Any]) -> None:
         raise
 
 
-def secure_read_text(path: str | Path) -> str:
+def atomic_write_json(path: str | Path, value: dict[str, Any], mode: int = 0o600) -> None:
+    content = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    atomic_write_text(path, content, mode=mode)
+
+
+def secure_read_raw_text(path: str | Path, *, consume: bool = False) -> str:
     target = Path(path).expanduser()
     _verify_no_symlink_components(target)
 
@@ -267,9 +271,14 @@ def secure_read_text(path: str | Path) -> str:
                 raise SecurityError(f"Insecure file permissions: mode is 0{file_mode:o}, must be 0600")
 
         with os.fdopen(fd, "r", encoding="utf-8") as handle:
-            value = handle.read().strip()
+            value = handle.read()
     finally:
-        with contextlib.suppress(OSError):
-            resolved.unlink(missing_ok=True)
+        if consume:
+            with contextlib.suppress(OSError):
+                resolved.unlink(missing_ok=True)
 
     return value
+
+
+def secure_read_text(path: str | Path) -> str:
+    return secure_read_raw_text(path, consume=True).strip()

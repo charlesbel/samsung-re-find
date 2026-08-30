@@ -20,11 +20,15 @@ from .constants import (
     WEB_FIND_CLIENT_ID,
 )
 from .credentials import (
+    ALLOWED_FIND_IOT_KEYS,
+    ALLOWED_WEB_KEYS,
     MasterStateStore,
+    project_legacy_derived,
     resolve_find_state_path,
     resolve_legacy_find_state_path,
     resolve_pending_path,
     validate_auth_server_url,
+    validate_derived_state,
 )
 from .crypto import code_challenge, decrypt_auth_value, encrypt_svc_param, random_urlsafe
 from .exceptions import AuthError, SecurityError
@@ -73,6 +77,22 @@ class SamsungAuth:
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.close()
+
+    def _save_derived_state(self, state: dict[str, Any]) -> None:
+        """Validate and atomically write canonical derived state."""
+        validate_derived_state(state)
+        atomic_write_json(self.state_path, state)
+
+    def master_summary(self) -> dict[str, str | None]:
+        """Return narrow non-secret master fields (auth_server_url, user_id, login_id) for API dispatch."""
+        master = self.master_store.load(allow_legacy_fallback=True)
+        if not master:
+            return {"auth_server_url": None, "user_id": None, "login_id": None}
+        return {
+            "auth_server_url": master.identity.auth_server_url,
+            "user_id": master.account.user_id,
+            "login_id": master.account.login_id,
+        }
 
     def start(self, country: str = "us", locale: str = "en-US") -> str:
         response = self.http.get(ENTRY_POINT_URL)
@@ -205,7 +225,7 @@ class SamsungAuth:
             "iot": iot_tok,
         }
         with locked(self.state_path):
-            atomic_write_json(self.state_path, derived_state)
+            self._save_derived_state(derived_state)
         Path(self.pending_path).expanduser().unlink(missing_ok=True)
         return self.public_status()
 
@@ -232,7 +252,7 @@ class SamsungAuth:
 
     def _load_legacy_safe(self) -> dict[str, Any]:
         try:
-            return read_json(self.legacy_state_path, required=False)
+            return project_legacy_derived(read_json(self.legacy_state_path, required=False))
         except Exception:
             return {}
 
@@ -269,20 +289,28 @@ class SamsungAuth:
                 device_id=master.installation.physical_address,
                 login_id=master.account.login_id,
             )
-            state[kind.name] = new_token
-            state["master_generation"] = master.generation
-            state["updated_at"] = int(time.time())
-            state.setdefault("schema", 1)
-            state.setdefault("created_at", int(time.time()))
-            atomic_write_json(self.state_path, state)
+            clean_state: dict[str, Any] = {
+                "schema": 1,
+                "master_generation": master.generation,
+                "created_at": state.get("created_at", int(time.time())),
+                "updated_at": int(time.time()),
+            }
+            if "find" in state and isinstance(state["find"], dict):
+                clean_state["find"] = {k: v for k, v in state["find"].items() if k in ALLOWED_FIND_IOT_KEYS}
+            if "iot" in state and isinstance(state["iot"], dict):
+                clean_state["iot"] = {k: v for k, v in state["iot"].items() if k in ALLOWED_FIND_IOT_KEYS}
+            if "web" in state and isinstance(state["web"], dict):
+                clean_state["web"] = {k: v for k, v in state["web"].items() if k in ALLOWED_WEB_KEYS}
+            clean_state[kind.name] = new_token
+            self._save_derived_state(clean_state)
             return str(new_token["access_token"])
 
     def state(self) -> dict[str, Any]:
-        """Return derived state, falling back to legacy for compatibility."""
+        """Return derived state only, projecting legacy fallback safely without master fields."""
         if self.state_path.exists():
-            return read_json(self.state_path)
+            return validate_derived_state(read_json(self.state_path))
         if self.legacy_state_path.exists():
-            return read_json(self.legacy_state_path)
+            return project_legacy_derived(read_json(self.legacy_state_path))
         return {}
 
     def web_session_cookie(self, *, force_refresh: bool = False) -> str:
@@ -354,11 +382,18 @@ class SamsungAuth:
             if not self._validate_web_cookie(jsessionid):
                 raise AuthError("Samsung issued a web Find cookie that failed validation")
 
-            state["web"] = {"jsessionid": jsessionid, "updated_at": int(time.time())}
-            state.setdefault("schema", 1)
-            state.setdefault("created_at", int(time.time()))
-            state["updated_at"] = int(time.time())
-            atomic_write_json(self.state_path, state)
+            clean_state: dict[str, Any] = {
+                "schema": 1,
+                "master_generation": state.get("master_generation") or (master.generation if master else None),
+                "created_at": state.get("created_at", int(time.time())),
+                "updated_at": int(time.time()),
+            }
+            if "find" in state and isinstance(state["find"], dict):
+                clean_state["find"] = {k: v for k, v in state["find"].items() if k in ALLOWED_FIND_IOT_KEYS}
+            if "iot" in state and isinstance(state["iot"], dict):
+                clean_state["iot"] = {k: v for k, v in state["iot"].items() if k in ALLOWED_FIND_IOT_KEYS}
+            clean_state["web"] = {"jsessionid": jsessionid, "updated_at": int(time.time())}
+            self._save_derived_state(clean_state)
             return jsessionid
 
     @staticmethod

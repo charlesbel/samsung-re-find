@@ -99,17 +99,19 @@ class SamsungFindClient:
         return response
 
     def verify_find_token(self) -> bool:
-        state = self.auth.state()
-        auth_server = state["auth_server_url"].removeprefix("https://").removeprefix("http://")
+        summary = self.auth.master_summary()
+        auth_server_raw = summary.get("auth_server_url") or "account.samsung.com"
+        user_id = summary.get("user_id") or ""
+        auth_server = auth_server_raw.removeprefix("https://").removeprefix("http://")
         headers = {
-            "X-Sec-Sa-Userid": state["user_id"],
+            "X-Sec-Sa-Userid": user_id,
             "X-Sec-Sa-Countrycode": "FRA" if self.country == "FR" else self.country,
             "X-Sec-Sa-Authserverurl": auth_server,
             "X-Sec-Sa-Authtoken": self.auth.access_token(FIND),
             "X-Sec-Tab-Name": "DEVICES",
             "Accept": "application/json",
         }
-        url = f"https://api.samsungfind.com/users/{state['user_id']}/key"
+        url = f"https://api.samsungfind.com/users/{user_id}/key"
         response = self.http.get(url, headers=headers)
         if response.status_code in (401, 403):
             headers["X-Sec-Sa-Authtoken"] = self.auth.access_token(FIND, force_refresh=True)

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
+import stat
 import sys
 import time
 import urllib.parse
@@ -13,26 +16,12 @@ from pathlib import Path
 from typing import Any
 
 from .exceptions import AuthError, SecurityError, StorageError
-from .storage import atomic_write_json, locked, read_json
+from .storage import atomic_write_json, atomic_write_text, locked, read_json, secure_read_raw_text
 
 MASTER_SCHEMA_ID = "io.github.charlesbel.samsung-account.master"
 MASTER_SCHEMA_VERSION = 1
 
-FORBIDDEN_DERIVED_KEYS = frozenset(
-    {
-        "userauth_token",
-        "login_id",
-        "user_id",
-        "physical_address",
-        "device_id",
-        "auth_server_url",
-        "account",
-        "identity",
-        "installation",
-    }
-)
-
-ALLOWED_DERIVED_KEYS = frozenset(
+ALLOWED_DERIVED_TOP_KEYS = frozenset(
     {
         "schema",
         "master_generation",
@@ -44,15 +33,136 @@ ALLOWED_DERIVED_KEYS = frozenset(
     }
 )
 
+ALLOWED_FIND_IOT_KEYS = frozenset(
+    {
+        "access_token",
+        "refresh_token",
+        "expires_at",
+        "obtained_at",
+        "token_type",
+        "scope",
+        "expires_in",
+    }
+)
+
+ALLOWED_WEB_KEYS = frozenset(
+    {
+        "jsessionid",
+        "updated_at",
+        "obtained_at",
+    }
+)
+
+FORBIDDEN_MASTER_KEY_NAMES = frozenset(
+    {
+        "userauth_token",
+        "userauthtoken",
+        "login_id",
+        "loginid",
+        "user_id",
+        "userid",
+        "physical_address",
+        "physicaladdress",
+        "device_id",
+        "deviceid",
+        "auth_server_url",
+        "authserverurl",
+        "account",
+        "identity",
+        "installation",
+    }
+)
+
+
+def _check_no_forbidden_keys_recursive(obj: Any) -> None:
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if not isinstance(k, str):
+                raise SecurityError("Non-string key in derived state")
+            k_clean = k.lower().replace("_", "").replace("-", "")
+            if k_clean in {name.lower().replace("_", "").replace("-", "") for name in FORBIDDEN_MASTER_KEY_NAMES}:
+                raise SecurityError(f"Forbidden master key found in derived state: {k!r}")
+            _check_no_forbidden_keys_recursive(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            _check_no_forbidden_keys_recursive(item)
+
 
 def validate_derived_state(data: dict[str, Any]) -> dict[str, Any]:
-    """Validate that derived state contains no master identity fields."""
+    """Strictly validate derived state against allowlisted schema and reject any master keys."""
     if not isinstance(data, dict):
         raise SecurityError("Derived state must be a JSON dictionary")
-    for key in data:
-        if key in FORBIDDEN_DERIVED_KEYS:
-            raise SecurityError(f"Forbidden master key in derived state: {key!r}")
+
+    _check_no_forbidden_keys_recursive(data)
+
+    for k in data:
+        if k not in ALLOWED_DERIVED_TOP_KEYS:
+            raise SecurityError(f"Unknown or unauthorized top-level key in derived state: {k!r}")
+
+    schema = data.get("schema")
+    if schema is not None and not isinstance(schema, int):
+        raise SecurityError("Derived state 'schema' must be an integer")
+
+    generation = data.get("master_generation")
+    if generation is not None and not isinstance(generation, str):
+        raise SecurityError("Derived state 'master_generation' must be a string")
+
+    for ts_key in ("created_at", "updated_at"):
+        ts = data.get(ts_key)
+        if ts is not None and not isinstance(ts, (int, float)):
+            raise SecurityError(f"Derived state '{ts_key}' must be numeric")
+
+    for kind in ("find", "iot"):
+        token_obj = data.get(kind)
+        if token_obj is not None:
+            if not isinstance(token_obj, dict):
+                raise SecurityError(f"Derived state '{kind}' must be a dictionary")
+            for k, v in token_obj.items():
+                if k not in ALLOWED_FIND_IOT_KEYS:
+                    raise SecurityError(f"Unauthorized key in '{kind}' token object: {k!r}")
+                if k in ("access_token", "refresh_token", "token_type", "scope") and not isinstance(v, str):
+                    raise SecurityError(f"Invalid type for '{kind}.{k}'")
+                if k in ("expires_at", "obtained_at", "expires_in") and not isinstance(v, (int, float)):
+                    raise SecurityError(f"Invalid numeric timestamp for '{kind}.{k}'")
+
+    web_obj = data.get("web")
+    if web_obj is not None:
+        if not isinstance(web_obj, dict):
+            raise SecurityError("Derived state 'web' must be a dictionary")
+        for k, v in web_obj.items():
+            if k not in ALLOWED_WEB_KEYS:
+                raise SecurityError(f"Unauthorized key in 'web' object: {k!r}")
+            if k == "jsessionid" and not isinstance(v, str):
+                raise SecurityError("Invalid type for 'web.jsessionid'")
+            if k in ("updated_at", "obtained_at") and not isinstance(v, (int, float)):
+                raise SecurityError(f"Invalid numeric timestamp for 'web.{k}'")
+
     return data
+
+
+def project_legacy_derived(legacy_data: dict[str, Any], master_generation: str | None = None) -> dict[str, Any]:
+    """Extract and validate a clean derived state projection from legacy mixed state."""
+    if not isinstance(legacy_data, dict):
+        return {}
+
+    now = time.time()
+    clean: dict[str, Any] = {
+        "schema": 1,
+        "master_generation": master_generation or str(uuid.uuid4()),
+        "created_at": float(legacy_data.get("created_at", now)),
+        "updated_at": float(legacy_data.get("updated_at", now)),
+    }
+
+    if isinstance(legacy_data.get("find"), dict):
+        clean["find"] = {k: v for k, v in legacy_data["find"].items() if k in ALLOWED_FIND_IOT_KEYS}
+
+    if isinstance(legacy_data.get("iot"), dict):
+        clean["iot"] = {k: v for k, v in legacy_data["iot"].items() if k in ALLOWED_FIND_IOT_KEYS}
+
+    if isinstance(legacy_data.get("web"), dict):
+        clean["web"] = {k: v for k, v in legacy_data["web"].items() if k in ALLOWED_WEB_KEYS}
+
+    return validate_derived_state(clean)
 
 
 @dataclass(frozen=True)
@@ -422,8 +532,7 @@ class MasterStateStore:
 
         if allow_legacy_fallback and self.legacy_path.exists():
             warnings.warn(
-                "Using legacy authentication state from samsung-find. "
-                "Run 'samsung-find auth migrate-master' to migrate.",
+                "Using legacy authentication state from samsung-find. Run 'samsung-find migrate-master' to migrate.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -459,9 +568,9 @@ class MasterStateStore:
             if not self.legacy_path.exists():
                 raise AuthError(f"Legacy state file does not exist: {self.legacy_path.name}")
 
-            legacy_content = self.legacy_path.read_text(encoding="utf-8")
+            legacy_content = secure_read_raw_text(self.legacy_path, consume=False)
             try:
-                legacy_data = read_json(self.legacy_path)
+                legacy_data = json.loads(legacy_content)
             except Exception as exc:
                 raise AuthError(f"Failed to read legacy state: {exc}") from exc
 
@@ -495,68 +604,97 @@ class MasterStateStore:
                 identity=MasterIdentity(auth_server_url=auth_server, userauth_token=userauth.strip()),
             )
 
-            clean_derived: dict[str, Any] = {
-                "schema": 1,
-                "master_generation": gen,
-                "created_at": float(legacy_data.get("created_at", now)),
-                "updated_at": now,
-            }
-            if isinstance(legacy_data.get("find"), dict):
-                clean_derived["find"] = {
-                    k: v
-                    for k, v in legacy_data["find"].items()
-                    if k in {"access_token", "refresh_token", "expires_at", "token_type", "scope"}
-                }
-            if isinstance(legacy_data.get("iot"), dict):
-                clean_derived["iot"] = {
-                    k: v
-                    for k, v in legacy_data["iot"].items()
-                    if k in {"access_token", "refresh_token", "expires_at", "token_type", "scope"}
-                }
-            if isinstance(legacy_data.get("web"), dict):
-                clean_derived["web"] = {
-                    k: v for k, v in legacy_data["web"].items() if k in {"jsessionid", "updated_at"}
-                }
+            candidate_derived = project_legacy_derived(legacy_data, master_generation=gen)
 
             master_exists = self.master_path.exists()
             derived_exists = self.canonical_state_path.exists()
 
-            if master_exists and not force:
+            existing_master: MasterState | None = None
+            if master_exists:
                 try:
                     existing_master = self._load_master_locked()
-                    if (
-                        existing_master
-                        and existing_master.account.login_id == candidate_master.account.login_id
-                        and existing_master.identity.userauth_token == candidate_master.identity.userauth_token
-                    ):
-                        return {
-                            "migrated": False,
-                            "source_kind": "legacy_samsung_find",
-                            "target_kind": "master_state_v1",
-                            "schema_version": MASTER_SCHEMA_VERSION,
-                        }
                 except Exception:
-                    pass
-                raise AuthError(
-                    "Target master or derived state already exists with conflicting data. Use --force to overwrite."
-                )
+                    existing_master = None
 
-            if derived_exists and not force and not master_exists:
-                raise AuthError(
-                    "Target master or derived state already exists with conflicting data. Use --force to overwrite."
-                )
+            master_matches = bool(
+                existing_master
+                and existing_master.account.login_id == candidate_master.account.login_id
+                and existing_master.identity.userauth_token == candidate_master.identity.userauth_token
+            )
 
-            # Two-phase atomic write with rollback on second-write failure
-            atomic_write_json(self.master_path, candidate_master.to_dict())
-            try:
-                self._atomic_write_derived(self.canonical_state_path, clean_derived)
-            except BaseException:
-                if not master_exists:
+            existing_derived: dict[str, Any] | None = None
+            if derived_exists:
+                try:
+                    existing_derived = read_json(self.canonical_state_path, required=False)
+                except Exception:
+                    existing_derived = None
+
+            derived_matches = bool(
+                existing_derived
+                and existing_derived.get("find") == candidate_derived.get("find")
+                and existing_derived.get("iot") == candidate_derived.get("iot")
+            )
+
+            if master_exists and not master_matches and not force:
+                raise AuthError("Target master state already exists with conflicting data. Use --force to overwrite.")
+
+            if derived_exists and not derived_matches and not force:
+                raise AuthError("Target derived state already exists with conflicting data. Use --force to overwrite.")
+
+            if master_exists and derived_exists and master_matches and derived_matches and not force:
+                return {
+                    "migrated": False,
+                    "source_kind": "legacy_samsung_find",
+                    "target_kind": "master_state_v1",
+                    "schema_version": MASTER_SCHEMA_VERSION,
+                }
+
+            # Capture in-memory snapshots for complete rollback
+            old_master_content: str | None = None
+            old_master_mode: int | None = None
+            if master_exists:
+                old_master_content = secure_read_raw_text(self.master_path, consume=False)
+                old_master_mode = stat.S_IMODE(self.master_path.stat().st_mode)
+
+            old_derived_content: str | None = None
+            old_derived_mode: int | None = None
+            if derived_exists:
+                old_derived_content = secure_read_raw_text(self.canonical_state_path, consume=False)
+                old_derived_mode = stat.S_IMODE(self.canonical_state_path.stat().st_mode)
+
+            def _rollback_targets() -> None:
+                if old_master_content is not None:
+                    with contextlib.suppress(Exception):
+                        atomic_write_text(self.master_path, old_master_content, mode=old_master_mode or 0o600)
+                else:
                     self.master_path.unlink(missing_ok=True)
-                raise
 
-            # Verify legacy state was byte-for-byte untouched
-            assert self.legacy_path.read_text(encoding="utf-8") == legacy_content
+                if old_derived_content is not None:
+                    with contextlib.suppress(Exception):
+                        atomic_write_text(
+                            self.canonical_state_path,
+                            old_derived_content,
+                            mode=old_derived_mode or 0o600,
+                        )
+                else:
+                    self.canonical_state_path.unlink(missing_ok=True)
+
+            try:
+                # 1. Write master state if missing or forced or repairing
+                atomic_write_json(self.master_path, candidate_master.to_dict())
+
+                # 2. Write clean derived state
+                self._atomic_write_derived(self.canonical_state_path, candidate_derived)
+
+                # 3. Verify legacy state was NOT modified (runtime check, never assert!)
+                post_legacy_content = secure_read_raw_text(self.legacy_path, consume=False)
+                if post_legacy_content != legacy_content:
+                    _rollback_targets()
+                    raise SecurityError("Legacy source state was unexpectedly modified during migration")
+
+            except BaseException:
+                _rollback_targets()
+                raise
 
             return {
                 "migrated": True,
