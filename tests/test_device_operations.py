@@ -53,10 +53,12 @@ def phone():
 
 
 def test_resolve_device_matches_name_model_and_rejects_ambiguity():
-    client = client_with_devices([
-        phone(),
-        {**phone(), "id": "device-2", "name": "Backup Galaxy Phone", "model": "SM-TEST2"},
-    ])
+    client = client_with_devices(
+        [
+            phone(),
+            {**phone(), "id": "device-2", "name": "Backup Galaxy Phone", "model": "SM-TEST2"},
+        ]
+    )
     assert client.resolve_device("SM-TEST1")["name"] == "Primary Galaxy Phone"
     with pytest.raises(SamsungAuthError, match="ambiguous"):
         client.resolve_device("Galaxy Phone")
@@ -74,14 +76,26 @@ def test_capabilities_are_conservative_for_phone():
 
 def test_ring_sends_expected_payload_and_returns_sanitized_result(monkeypatch):
     client = client_with_devices([phone()])
-    web = FakeWeb([
-        FakeResponse(payload={"resultCode": "00", "reqId": "request-1", "oprnType": "RING"}),
-        FakeResponse(payload={"operation": [{
-            "oprnType": "RING", "oprnStsCd": "2800", "oprnResultCode": "1200",
-            "oprnCrtDate": "20260825100000", "oprnDoneDate": "20260825100005", "reqId": "request-1",
-            "privateField": "must-not-leak",
-        }]}),
-    ])
+    web = FakeWeb(
+        [
+            FakeResponse(payload={"resultCode": "00", "reqId": "request-1", "oprnType": "RING"}),
+            FakeResponse(
+                payload={
+                    "operation": [
+                        {
+                            "oprnType": "RING",
+                            "oprnStsCd": "2800",
+                            "oprnResultCode": "1200",
+                            "oprnCrtDate": "20260825100000",
+                            "oprnDoneDate": "20260825100005",
+                            "reqId": "request-1",
+                            "privateField": "must-not-leak",
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
     client._web_session = lambda: (web, "csrf")
     monkeypatch.setattr("samsung_find.api.time.sleep", lambda _seconds: None)
 
@@ -90,8 +104,11 @@ def test_ring_sends_expected_payload_and_returns_sanitized_result(monkeypatch):
     add_url, add_kwargs = web.calls[0]
     assert add_url.endswith("/dm/addOperation.do")
     assert add_kwargs["json"] == {
-        "dvceId": "device-1", "operation": "RING", "usrId": "user-1",
-        "status": "start", "lockMessage": "Find request",
+        "dvceId": "device-1",
+        "operation": "RING",
+        "usrId": "user-1",
+        "status": "start",
+        "lockMessage": "Find request",
     }
     assert result["accepted"] is True
     assert result["operation"]["result"] == "success"
@@ -100,14 +117,26 @@ def test_ring_sends_expected_payload_and_returns_sanitized_result(monkeypatch):
 
 def test_connection_check_returns_battery(monkeypatch):
     client = client_with_devices([phone()])
-    web = FakeWeb([
-        FakeResponse(payload={"resultCode": "00", "reqId": "request-2", "oprnType": "CHECK_CONNECTION"}),
-        FakeResponse(payload={"operation": [{
-            "oprnType": "CHECK_CONNECTION", "oprnStsCd": "2800", "oprnResultCode": "1200",
-            "oprnCrtDate": "20260825100201", "oprnDoneDate": "20260825100202",
-            "battery": "80", "reqId": "request-2",
-        }]}),
-    ])
+    web = FakeWeb(
+        [
+            FakeResponse(payload={"resultCode": "00", "reqId": "request-2", "oprnType": "CHECK_CONNECTION"}),
+            FakeResponse(
+                payload={
+                    "operation": [
+                        {
+                            "oprnType": "CHECK_CONNECTION",
+                            "oprnStsCd": "2800",
+                            "oprnResultCode": "1200",
+                            "oprnCrtDate": "20260825100201",
+                            "oprnDoneDate": "20260825100202",
+                            "battery": "80",
+                            "reqId": "request-2",
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
     client._web_session = lambda: (web, "csrf")
     monkeypatch.setattr("samsung_find.api.time.sleep", lambda _seconds: None)
 
@@ -120,17 +149,36 @@ def test_connection_check_returns_battery(monkeypatch):
 
 def test_connection_check_polls_past_in_progress(monkeypatch):
     client = client_with_devices([phone()])
-    web = FakeWeb([
-        FakeResponse(payload={"resultCode": "00", "reqId": "request-3"}),
-        FakeResponse(payload={"operation": [{
-            "oprnType": "CHECK_CONNECTION", "oprnStsCd": "1000", "oprnResultCode": "200",
-            "reqId": "request-3",
-        }]}),
-        FakeResponse(payload={"operation": [{
-            "oprnType": "CHECK_CONNECTION", "oprnStsCd": "2800", "oprnResultCode": "1200",
-            "battery": "75", "reqId": "request-3",
-        }]}),
-    ])
+    web = FakeWeb(
+        [
+            FakeResponse(payload={"resultCode": "00", "reqId": "request-3"}),
+            FakeResponse(
+                payload={
+                    "operation": [
+                        {
+                            "oprnType": "CHECK_CONNECTION",
+                            "oprnStsCd": "1000",
+                            "oprnResultCode": "200",
+                            "reqId": "request-3",
+                        }
+                    ]
+                }
+            ),
+            FakeResponse(
+                payload={
+                    "operation": [
+                        {
+                            "oprnType": "CHECK_CONNECTION",
+                            "oprnStsCd": "2800",
+                            "oprnResultCode": "1200",
+                            "battery": "75",
+                            "reqId": "request-3",
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
     client._web_session = lambda: (web, "csrf")
     ticks = iter([0.0, 0.0, 0.1, 0.2, 0.3])
     monkeypatch.setattr("samsung_find.api.time.monotonic", lambda: next(ticks, 0.3))
@@ -145,17 +193,37 @@ def test_connection_check_polls_past_in_progress(monkeypatch):
 
 def test_operation_poll_ignores_stale_request_ids(monkeypatch):
     client = client_with_devices([phone()])
-    web = FakeWeb([
-        FakeResponse(payload={"resultCode": "00", "reqId": "new-request"}),
-        FakeResponse(payload={"operation": [{
-            "oprnType": "CHECK_CONNECTION", "oprnStsCd": "2800", "oprnResultCode": "1200",
-            "battery": "10", "reqId": "old-request",
-        }]}),
-        FakeResponse(payload={"operation": [{
-            "oprnType": "CHECK_CONNECTION", "oprnStsCd": "2800", "oprnResultCode": "1200",
-            "battery": "80", "reqId": "new-request",
-        }]}),
-    ])
+    web = FakeWeb(
+        [
+            FakeResponse(payload={"resultCode": "00", "reqId": "new-request"}),
+            FakeResponse(
+                payload={
+                    "operation": [
+                        {
+                            "oprnType": "CHECK_CONNECTION",
+                            "oprnStsCd": "2800",
+                            "oprnResultCode": "1200",
+                            "battery": "10",
+                            "reqId": "old-request",
+                        }
+                    ]
+                }
+            ),
+            FakeResponse(
+                payload={
+                    "operation": [
+                        {
+                            "oprnType": "CHECK_CONNECTION",
+                            "oprnStsCd": "2800",
+                            "oprnResultCode": "1200",
+                            "battery": "80",
+                            "reqId": "new-request",
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
     client._web_session = lambda: (web, "csrf")
     ticks = iter([0.0, 0.0, 0.1, 0.2, 0.3])
     monkeypatch.setattr("samsung_find.api.time.monotonic", lambda: next(ticks, 0.3))
@@ -169,15 +237,23 @@ def test_operation_poll_ignores_stale_request_ids(monkeypatch):
 
 def test_operation_fails_closed_when_acceptance_omits_request_id(monkeypatch):
     client = client_with_devices([phone()])
-    web = FakeWeb([
-        FakeResponse(payload={"resultCode": "00"}),
-        FakeResponse(payload={"operation": [{
-            "oprnType": "CHECK_CONNECTION",
-            "oprnStsCd": "2800",
-            "oprnResultCode": "1200",
-            "reqId": "old-request",
-        }]}),
-    ])
+    web = FakeWeb(
+        [
+            FakeResponse(payload={"resultCode": "00"}),
+            FakeResponse(
+                payload={
+                    "operation": [
+                        {
+                            "oprnType": "CHECK_CONNECTION",
+                            "oprnStsCd": "2800",
+                            "oprnResultCode": "1200",
+                            "reqId": "old-request",
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
     client._web_session = lambda: (web, "csrf")
     monkeypatch.setattr("samsung_find.api.time.sleep", lambda _seconds: None)
 
@@ -187,22 +263,49 @@ def test_operation_fails_closed_when_acceptance_omits_request_id(monkeypatch):
 
 def test_locate_uses_direct_location_operation_and_detects_fresh_fix(monkeypatch):
     client = client_with_devices([phone()])
-    old = FakeWeb([FakeResponse(payload={"operation": [{
-        "oprnType": "LOCATION", "latitude": 10.0, "longitude": 20.0,
-        "horizontalUncertainty": "10", "verticalUncertainty": "0",
-        "extra": {"gpsUtcDt": "20260817075739"},
-    }]})])
-    fresh = FakeWeb([FakeResponse(payload={"operation": [{
-        "oprnType": "LOCATION", "latitude": 11.0, "longitude": 21.0,
-        "horizontalUncertainty": "5", "verticalUncertainty": "0",
-        "extra": {"gpsUtcDt": "20260825100731"},
-    }]})])
+    old = FakeWeb(
+        [
+            FakeResponse(
+                payload={
+                    "operation": [
+                        {
+                            "oprnType": "LOCATION",
+                            "latitude": 10.0,
+                            "longitude": 20.0,
+                            "horizontalUncertainty": "10",
+                            "verticalUncertainty": "0",
+                            "extra": {"gpsUtcDt": "20260817075739"},
+                        }
+                    ]
+                }
+            )
+        ]
+    )
+    fresh = FakeWeb(
+        [
+            FakeResponse(
+                payload={
+                    "operation": [
+                        {
+                            "oprnType": "LOCATION",
+                            "latitude": 11.0,
+                            "longitude": 21.0,
+                            "horizontalUncertainty": "5",
+                            "verticalUncertainty": "0",
+                            "extra": {"gpsUtcDt": "20260825100731"},
+                        }
+                    ]
+                }
+            )
+        ]
+    )
     sessions = iter([(old, "csrf-old"), (fresh, "csrf-new")])
     client._web_session = lambda: next(sessions)
     requested = []
-    client._perform_operation = lambda device, operation, poll_seconds: requested.append(
-        (device["id"], operation, poll_seconds)
-    ) or {"accepted": True, "operation": {"result": "success"}}
+    client._perform_operation = lambda device, operation, poll_seconds: (
+        requested.append((device["id"], operation, poll_seconds))
+        or {"accepted": True, "operation": {"result": "success"}}
+    )
 
     result = client.locate("Primary Galaxy", poll_seconds=180)
 
@@ -218,13 +321,23 @@ def test_locate_uses_direct_location_operation_and_detects_fresh_fix(monkeypatch
 def test_track_uses_start_and_stop_operation(monkeypatch):
     for enabled, expected in [(True, "TRACK_LOCATION_START"), (False, "TRACK_LOCATION_STOP")]:
         client = client_with_devices([phone()])
-        web = FakeWeb([
-            FakeResponse(payload={"resultCode": "00", "reqId": "track-1"}),
-            FakeResponse(payload={"operation": [{
-                "oprnType": expected, "oprnStsCd": "2100" if enabled else "2800",
-                "oprnResultCode": "1200", "reqId": "track-1",
-            }]}),
-        ])
+        web = FakeWeb(
+            [
+                FakeResponse(payload={"resultCode": "00", "reqId": "track-1"}),
+                FakeResponse(
+                    payload={
+                        "operation": [
+                            {
+                                "oprnType": expected,
+                                "oprnStsCd": "2100" if enabled else "2800",
+                                "oprnResultCode": "1200",
+                                "reqId": "track-1",
+                            }
+                        ]
+                    }
+                ),
+            ]
+        )
         client._web_session = lambda current_web=web: (current_web, "csrf")
         monkeypatch.setattr("samsung_find.api.time.sleep", lambda _seconds: None)
 

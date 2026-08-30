@@ -157,9 +157,7 @@ def validate_auth_server_url(value: str) -> str:
     parsed = urllib.parse.urlparse(value)
     hostname = (parsed.hostname or "").lower()
     trusted_host = (
-        hostname == "account.samsung.com"
-        or hostname == "samsungosp.com"
-        or hostname.endswith(".samsungosp.com")
+        hostname == "account.samsung.com" or hostname == "samsungosp.com" or hostname.endswith(".samsungosp.com")
     )
     try:
         port = parsed.port
@@ -339,9 +337,7 @@ class MasterStateStore:
             login_id = str(legacy_data.get("login_id", "legacy_user"))
             device_id = str(legacy_data.get("device_id", "legacy_device"))
             user_id = str(legacy_data.get("user_id")) if legacy_data.get("user_id") else None
-            auth_server = validate_auth_server_url(
-                legacy_data.get("auth_server_url", "https://auth.samsungosp.com")
-            )
+            auth_server = validate_auth_server_url(legacy_data.get("auth_server_url", "https://auth.samsungosp.com"))
 
             # Save new master state
             self.save(
@@ -363,4 +359,3 @@ class MasterStateStore:
                 "target_kind": "master_state_v1",
                 "schema_version": MASTER_SCHEMA_VERSION,
             }
-

@@ -57,6 +57,7 @@ class SamsungFindClient:
     @classmethod
     def from_config(cls, config: Any = None) -> SamsungFindClient:
         from .config import FindConfig
+
         cfg = config or FindConfig()
         auth = SamsungAuth(
             state_path=str(cfg.state_path),
@@ -89,6 +90,7 @@ class SamsungFindClient:
 
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         from .transport import validate_smartthings_url
+
         valid_url = validate_smartthings_url(str(url))
         headers = kwargs.pop("headers", None) or self._headers()
         response = self.http.request(method, valid_url, headers=headers, **kwargs)
@@ -130,6 +132,7 @@ class SamsungFindClient:
         if self._installed_app_id:
             return self._installed_app_id
         from .transport import validate_smartthings_url
+
         user_uuid = self._ensure_user_uuid()
         initial_url = "https://api.smartthings.com/installedapps?allowed=true"
         url: str | None = initial_url
@@ -143,7 +146,8 @@ class SamsungFindClient:
         plugin = "com.samsung.android.plugin.fme"
         selected = next(
             (
-                item for item in candidates
+                item
+                for item in candidates
                 if (item.get("ui") or {}).get("pluginId") == plugin
                 and (item.get("owner") or {}).get("ownerId") == user_uuid
             ),
@@ -174,6 +178,7 @@ class SamsungFindClient:
         body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         from .transport import _PROTECTED_FIELDS
+
         state = self.auth.state()
         token = self.auth.access_token(IOT)
         now = datetime.now(self.timezone)
@@ -216,9 +221,7 @@ class SamsungFindClient:
         ).json()
         status_code = response.get("statusCode")
         if status_code != 200:
-            raise SamsungAuthError(
-                f"Samsung Find installed app failed ({status_code}/{response.get('errorCode')})"
-            )
+            raise SamsungAuthError(f"Samsung Find installed app failed ({status_code}/{response.get('errorCode')})")
         message = response.get("message")
         if not isinstance(message, dict):
             raise SamsungAuthError("Samsung Find installed app returned no message object")
@@ -245,7 +248,9 @@ class SamsungFindClient:
         try:
             response = web.post(
                 "https://smartthingsfind.samsung.com/device/getDeviceList.do",
-                params={"_csrf": csrf}, data={}, headers={"Accept": "application/json"},
+                params={"_csrf": csrf},
+                data={},
+                headers={"Accept": "application/json"},
             )
             if response.status_code != 200:
                 raise SamsungAuthError(f"Samsung web device list failed with HTTP {response.status_code}")
@@ -258,27 +263,35 @@ class SamsungFindClient:
             if not device_id:
                 continue
             name = html.unescape(html.unescape(str(item.get("modelName") or device_id)))
-            result.append({
-                "id": str(device_id), "name": name, "model": item.get("modelID"),
-                "location_type": item.get("deviceTypeCode"), "user_id": item.get("usrId"), "raw": item,
-            })
+            result.append(
+                {
+                    "id": str(device_id),
+                    "name": name,
+                    "model": item.get("modelID"),
+                    "location_type": item.get("deviceTypeCode"),
+                    "user_id": item.get("usrId"),
+                    "raw": item,
+                }
+            )
         return result
 
     def resolve_device(self, query: str) -> dict[str, Any]:
         devices = self.devices()
         needle = query.casefold()
         exact = [
-            device for device in devices
-            if needle in {
+            device
+            for device in devices
+            if needle
+            in {
                 str(device.get("id", "")).casefold(),
                 str(device.get("model", "")).casefold(),
                 str(device.get("name", "")).casefold(),
             }
         ]
         matches = exact or [
-            device for device in devices
-            if needle in str(device.get("name", "")).casefold()
-            or needle in str(device.get("model", "")).casefold()
+            device
+            for device in devices
+            if needle in str(device.get("name", "")).casefold() or needle in str(device.get("model", "")).casefold()
         ]
         if not matches:
             names = ", ".join(str(device.get("name")) for device in devices)
@@ -385,9 +398,7 @@ class SamsungFindClient:
             accepted_data = response.json()
             accepted = accepted_data.get("resultCode") == "00"
             if not accepted:
-                raise SamsungAuthError(
-                    f"Samsung rejected operation {operation} ({accepted_data.get('resultCode')})"
-                )
+                raise SamsungAuthError(f"Samsung rejected operation {operation} ({accepted_data.get('resultCode')})")
             request_id = accepted_data.get("reqId")
             if not request_id:
                 raise SamsungAuthError(f"Samsung accepted operation {operation} but omitted request id")
@@ -406,10 +417,7 @@ class SamsungFindClient:
                 if result_response.status_code == 200:
                     operations = result_response.json().get("operation", [])
                     candidates = [entry for entry in operations if entry.get("oprnType") == operation]
-                    candidates = [
-                        entry for entry in candidates
-                        if str(entry.get("reqId")) == str(request_id)
-                    ]
+                    candidates = [entry for entry in candidates if str(entry.get("reqId")) == str(request_id)]
                     if candidates:
                         latest = self._sanitize_operation(candidates[-1])
                         if latest["result"] in {"success", "failed"}:
@@ -427,9 +435,7 @@ class SamsungFindClient:
             web.close()
 
     def check_connection(self, query: str, *, poll_seconds: int = 40) -> dict[str, Any]:
-        return self._perform_operation(
-            self.resolve_device(query), "CHECK_CONNECTION", poll_seconds=poll_seconds
-        )
+        return self._perform_operation(self.resolve_device(query), "CHECK_CONNECTION", poll_seconds=poll_seconds)
 
     def ring(
         self,
@@ -471,9 +477,7 @@ class SamsungFindClient:
         active_operation = None
         fresh_location_obtained = False
         if active:
-            active_operation = self._perform_operation(
-                device, "LOCATION", poll_seconds=poll_seconds
-            )
+            active_operation = self._perform_operation(device, "LOCATION", poll_seconds=poll_seconds)
             web, csrf = self._web_session()
             try:
                 candidate = self._web_location(web, csrf, device)
@@ -489,10 +493,13 @@ class SamsungFindClient:
         latitude, longitude = location["latitude"], location["longitude"]
         return {
             "device": {key: device.get(key) for key in ("name", "model", "location_type")},
-            "latitude": latitude, "longitude": longitude, "accuracy_m": location.get("accuracy_m"),
+            "latitude": latitude,
+            "longitude": longitude,
+            "accuracy_m": location.get("accuracy_m"),
             "last_update": datetime.fromtimestamp(timestamp, tz=self.timezone).isoformat(),
             "timezone": str(self.timezone),
-            "age_seconds": max(0, int(time.time() - timestamp)), "battery": location.get("battery"),
+            "age_seconds": max(0, int(time.time() - timestamp)),
+            "battery": location.get("battery"),
             "operation": location.get("operation"),
             "active_refresh_requested": bool(active_operation and active_operation.get("accepted")),
             "active_operation": active_operation,
@@ -504,7 +511,8 @@ class SamsungFindClient:
     def _web_location(web: httpx.Client, csrf: str, device: dict[str, Any]) -> dict[str, Any] | None:
         response = web.post(
             "https://smartthingsfind.samsung.com/device/setLastSelect.do",
-            params={"_csrf": csrf}, json={"dvceId": device["id"], "removeDevice": []},
+            params={"_csrf": csrf},
+            json={"dvceId": device["id"], "removeDevice": []},
             headers={"Accept": "application/json"},
         )
         if response.status_code != 200:
@@ -535,9 +543,14 @@ class SamsungFindClient:
                     ),
                     1,
                 )
-            candidate = {"timestamp": timestamp, "latitude": latitude, "longitude": longitude,
-                         "accuracy_m": accuracy, "battery": operation.get("battery") or source.get("battery"),
-                         "operation": operation.get("oprnType")}
+            candidate = {
+                "timestamp": timestamp,
+                "latitude": latitude,
+                "longitude": longitude,
+                "accuracy_m": accuracy,
+                "battery": operation.get("battery") or source.get("battery"),
+                "operation": operation.get("oprnType"),
+            }
             if best is None or candidate["timestamp"] > best["timestamp"]:
                 best = candidate
         return best

@@ -50,11 +50,7 @@ def is_trusted_smartthings_host(hostname: str) -> bool:
     host = hostname.lower()
     if host in _TRUSTED_HOSTS:
         return True
-    return (
-        host.endswith(".smartthings.com")
-        or host.endswith(".samsungosp.com")
-        or host.endswith(".samsungfind.com")
-    )
+    return host.endswith(".smartthings.com") or host.endswith(".samsungosp.com") or host.endswith(".samsungfind.com")
 
 
 def validate_smartthings_url(url: str, base_url: str | None = None) -> str:

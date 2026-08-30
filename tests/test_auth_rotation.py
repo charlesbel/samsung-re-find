@@ -26,12 +26,15 @@ class HTTP:
 def test_web_session_uses_server_state_and_bootstrap_cookie(tmp_path):
     state_path = tmp_path / "state.json"
     pending_path = tmp_path / "pending.json"
-    atomic_write_json(state_path, {
-        "auth_server_url": "https://eu-auth2.samsungosp.com",
-        "userauth_token": "master",
-        "device_id": "device",
-        "login_id": "login",
-    })
+    atomic_write_json(
+        state_path,
+        {
+            "auth_server_url": "https://eu-auth2.samsungosp.com",
+            "userauth_token": "master",
+            "device_id": "device",
+            "login_id": "login",
+        },
+    )
 
     with respx.mock(assert_all_called=True) as routes:
         bootstrap = routes.get("https://smartthingsfind.samsung.com/getState.do").mock(
@@ -83,9 +86,7 @@ def test_dead_refresh_token_falls_back_to_master_reissue(monkeypatch):
 
 def test_refresh_rotation_replaces_both_tokens():
     auth = SamsungAuth.__new__(SamsungAuth)
-    auth.http = HTTP(Response(200, {
-        "access_token": "access-2", "refresh_token": "refresh-2", "expires_in": 3600
-    }))
+    auth.http = HTTP(Response(200, {"access_token": "access-2", "refresh_token": "refresh-2", "expires_in": 3600}))
     state = {"auth_server_url": "https://auth.example", "find": {"refresh_token": "refresh-1"}}
     result = auth._refresh_or_reissue(state, FIND)
     assert result["access_token"] == "access-2"

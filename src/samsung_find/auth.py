@@ -256,17 +256,13 @@ class SamsungAuth:
                 "scope": IOT_SCOPE,
                 "login_id": state.get("login_id", ""),
             }
-            response = self.http.get(
-                f"{state['auth_server_url']}/auth/oauth2/v2/authorize", params=params
-            )
+            response = self.http.get(f"{state['auth_server_url']}/auth/oauth2/v2/authorize", params=params)
             self._raise(response, "web Find authorization")
             auth_data = response.json()
             code = auth_data.get("code")
             if not code and auth_data.get("privacyAccepted") == "N":
                 params.pop("login_id", None)
-                response = self.http.get(
-                    f"{state['auth_server_url']}/auth/oauth2/v2/authorize", params=params
-                )
+                response = self.http.get(f"{state['auth_server_url']}/auth/oauth2/v2/authorize", params=params)
                 self._raise(response, "web Find authorization without login_id")
                 auth_data = response.json()
                 code = auth_data.get("code")

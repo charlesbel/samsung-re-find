@@ -62,18 +62,14 @@ class SamsungFindMCPServer:
         self._tools["samsung_find_get_capabilities"] = {
             "name": "samsung_find_get_capabilities",
             "description": "Get safe supported features and capabilities for a specific device.",
-            "parameters": {
-                "query": {"type": "string", "description": "Device name or identifier", "required": True}
-            },
+            "parameters": {"query": {"type": "string", "description": "Device name or identifier", "required": True}},
             "handler": self._handle_get_capabilities,
             "is_effect": False,
         }
         self._tools["samsung_find_get_last_location"] = {
             "name": "samsung_find_get_last_location",
             "description": "Get the last known passive GPS location for a device without triggering fresh active fix.",
-            "parameters": {
-                "query": {"type": "string", "description": "Device name or identifier", "required": True}
-            },
+            "parameters": {"query": {"type": "string", "description": "Device name or identifier", "required": True}},
             "handler": self._handle_get_last_location,
             "is_effect": False,
         }

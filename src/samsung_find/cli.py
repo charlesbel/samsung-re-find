@@ -84,10 +84,7 @@ def install_handler(redirect_path: str) -> dict[str, object]:
     applications.mkdir(parents=True, exist_ok=True)
     desktop = applications / "samsung-find-callback.desktop"
     env_path = str(Path(redirect_path).expanduser().resolve())
-    exec_line = (
-        f"env SAMSUNG_FIND_REDIRECT_PATH={env_path} "
-        f"{sys.executable} -m samsung_find.capture_redirect %u"
-    )
+    exec_line = f"env SAMSUNG_FIND_REDIRECT_PATH={env_path} {sys.executable} -m samsung_find.capture_redirect %u"
     desktop.write_text(
         "[Desktop Entry]\n"
         "Type=Application\n"
@@ -147,15 +144,16 @@ def main(argv: list[str] | None = None) -> int:
             )
             if args.command == "verify":
                 cookie = auth.web_session_cookie()
-                emit({
-                    "persistent_master_token_present": auth.public_status()["authenticated"],
-                    "web_session_valid": auth._validate_web_cookie(cookie),
-                }, legacy_json=legacy)
+                emit(
+                    {
+                        "persistent_master_token_present": auth.public_status()["authenticated"],
+                        "web_session_valid": auth._validate_web_cookie(cookie),
+                    },
+                    legacy_json=legacy,
+                )
             elif args.command == "devices":
                 keys = (
-                    ("id", "name", "model", "location_type")
-                    if args.include_ids
-                    else ("name", "model", "location_type")
+                    ("id", "name", "model", "location_type") if args.include_ids else ("name", "model", "location_type")
                 )
                 emit([{key: d.get(key) for key in keys} for d in client.devices()], legacy_json=legacy)
             elif args.command == "capabilities":
@@ -163,13 +161,15 @@ def main(argv: list[str] | None = None) -> int:
             elif args.command == "check":
                 emit(client.check_connection(args.query, poll_seconds=args.poll_seconds), legacy_json=legacy)
             elif args.command == "ring":
-                emit(client.ring(
-                    args.query, status=args.status, message=args.message, poll_seconds=args.poll_seconds
-                ), legacy_json=legacy)
+                emit(
+                    client.ring(args.query, status=args.status, message=args.message, poll_seconds=args.poll_seconds),
+                    legacy_json=legacy,
+                )
             elif args.command == "track":
-                emit(client.track(
-                    args.query, enabled=args.action == "start", poll_seconds=args.poll_seconds
-                ), legacy_json=legacy)
+                emit(
+                    client.track(args.query, enabled=args.action == "start", poll_seconds=args.poll_seconds),
+                    legacy_json=legacy,
+                )
             elif args.command == "locate":
                 emit(
                     client.locate(args.query, active=not args.passive, poll_seconds=args.poll_seconds),

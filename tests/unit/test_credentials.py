@@ -141,16 +141,18 @@ def test_legacy_fallback_loading(tmp_path):
     legacy_file = tmp_path / "legacy_state.json"
     legacy_file.parent.mkdir(parents=True, exist_ok=True)
     legacy_file.write_text(
-        json.dumps({
-            "schema": 1,
-            "device_id": "legacy_device_id_123",
-            "auth_server_url": "https://auth.samsungosp.com",
-            "login_id": "legacy_user@example.com",
-            "user_id": "legacy_uid_456",
-            "userauth_token": "legacy_master_token_789",
-            "find": {"access_token": "at", "refresh_token": "rt"},
-            "iot": {"access_token": "iat", "refresh_token": "irt"},
-        }),
+        json.dumps(
+            {
+                "schema": 1,
+                "device_id": "legacy_device_id_123",
+                "auth_server_url": "https://auth.samsungosp.com",
+                "login_id": "legacy_user@example.com",
+                "user_id": "legacy_uid_456",
+                "userauth_token": "legacy_master_token_789",
+                "find": {"access_token": "at", "refresh_token": "rt"},
+                "iot": {"access_token": "iat", "refresh_token": "irt"},
+            }
+        ),
         encoding="utf-8",
     )
     legacy_file.chmod(0o600)

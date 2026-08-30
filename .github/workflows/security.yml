@@ -1,0 +1,47 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, feat/*]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan for secrets and sensitive patterns
+        run: |
+          python -c "
+          import os, sys, re
+          forbidden_patterns = [
+              re.compile(r'ghp_[a-zA-Z0-9]{36}'),
+              re.compile(r'BEGIN RSA PRIVATE KEY'),
+              re.compile(r'userauth_token.*[a-f0-9]{64}'),
+          ]
+          failed = False
+          for root, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if d not in ('.git', '.venv', '__pycache__', 'dist', 'build', '.pytest_cache')]
+              for f in files:
+                  path = os.path.join(root, f)
+                  try:
+                      with open(path, 'r', encoding='utf-8', errors='ignore') as handle:
+                          content = handle.read()
+                          for pat in forbidden_patterns:
+                              if pat.search(content):
+                                  print(f'Secret pattern detected in {path}')
+                                  failed = True
+                  except Exception:
+                      pass
+          if failed:
+              sys.exit(1)
+          print('Secret scan completed cleanly.')
+          "

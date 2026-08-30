@@ -10,8 +10,7 @@ REDIRECT_URI = "ms-app://s-1-15-2-4027708247-2189610-1983755848-2937435718-15787
 ENTRY_POINT_URL = "https://account.samsung.com/accounts/ANDROIDSDK/getEntryPoint"
 SMARTTHINGS_APP_VERSION = "1.8.21.28"
 SMARTTHINGS_USER_AGENT = (
-    f"Android/OneApp/{SMARTTHINGS_APP_VERSION}/Main "
-    "(Google Pixel 8 Pro; Android 14/14) SmartKit/4.423.1"
+    f"Android/OneApp/{SMARTTHINGS_APP_VERSION}/Main (Google Pixel 8 Pro; Android 14/14) SmartKit/4.423.1"
 )
 DEFAULT_STATE_PATH = "~/.config/samsung-find/state.json"
 DEFAULT_PENDING_PATH = "~/.config/samsung-find/pending.json"
