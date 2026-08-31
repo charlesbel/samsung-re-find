@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-08-31
+
+### Fixed
+- Accepted Samsung's legitimate HTTP 302 response from the web Find `login.do` exchange without following it, while requiring an explicit HTTPS redirect to `smartthingsfind.samsung.com` on the standard port.
+- Read the replacement `JSESSIONID` only from the `login.do` response, preventing accidental reuse of the bootstrap cookie.
+- Kept external, missing, malformed, userinfo-bearing, and non-standard-port redirect destinations fail-closed.
+
 ## [0.2.1] - 2026-08-31
 
 ### Changed

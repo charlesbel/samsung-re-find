@@ -418,11 +418,8 @@ class SamsungAuth:
                         "state": login_state,
                     },
                 )
-                self._raise(response, "web Find session exchange")
-                cookies = [cookie.value for cookie in web.cookies.jar if cookie.name == "JSESSIONID"]
-                if not cookies:
-                    raise AuthError("Samsung did not issue a web Find session cookie")
-                jsessionid = cookies[-1]
+                self._accept_web_login_response(response)
+                jsessionid = self._web_login_cookie(response)
             if not self._validate_web_cookie(jsessionid):
                 raise AuthError("Samsung issued a web Find cookie that failed validation")
 
@@ -439,6 +436,31 @@ class SamsungAuth:
             clean_state["web"] = {"jsessionid": jsessionid, "updated_at": int(time.time())}
             self._save_derived_state(clean_state)
             return jsessionid
+
+    @staticmethod
+    def _accept_web_login_response(response: httpx.Response) -> None:
+        if response.is_success:
+            return
+        if response.status_code == 302:
+            location = response.headers.get("location")
+            if not location:
+                raise SecurityError("Samsung web Find login redirected to an untrusted destination")
+            destination = urllib.parse.urlparse(location)
+            if (
+                destination.scheme == "https"
+                and destination.hostname == "smartthingsfind.samsung.com"
+                and destination.netloc.lower() in ("smartthingsfind.samsung.com", "smartthingsfind.samsung.com:443")
+            ):
+                return
+            raise SecurityError("Samsung web Find login redirected to an untrusted destination")
+        SamsungAuth._raise(response, "web Find session exchange")
+
+    @staticmethod
+    def _web_login_cookie(response: httpx.Response) -> str:
+        cookies = [str(cookie.value) for cookie in response.cookies.jar if cookie.name == "JSESSIONID" and cookie.value]
+        if not cookies:
+            raise AuthError("Samsung did not issue a web Find session cookie")
+        return cookies[-1]
 
     @staticmethod
     def _validate_web_cookie(jsessionid: str) -> bool:

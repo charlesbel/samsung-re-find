@@ -139,7 +139,7 @@ def test_web_session_does_not_reuse_cookie_from_mismatched_master_generation(tmp
     assert "web" not in persisted
 
 
-def test_web_session_uses_server_state_and_bootstrap_cookie(tmp_path):
+def test_web_session_uses_server_state_and_accepts_same_origin_login_redirect(tmp_path):
     state_path = tmp_path / "state.json"
     pending_path = tmp_path / "pending.json"
     master_path = tmp_path / "master.json"
@@ -170,8 +170,11 @@ def test_web_session_uses_server_state_and_bootstrap_cookie(tmp_path):
             assert request.url.params["state"] == "server-state"
             assert "JSESSIONID=bootstrap" in request.headers.get("cookie", "")
             return httpx.Response(
-                200,
-                headers={"set-cookie": "JSESSIONID=valid-session; Path=/; Secure; HttpOnly"},
+                302,
+                headers={
+                    "location": "https://smartthingsfind.samsung.com",
+                    "set-cookie": "JSESSIONID=valid-session; Path=/; Secure; HttpOnly",
+                },
             )
 
         routes.get("https://smartthingsfind.samsung.com/login.do").mock(side_effect=login)
@@ -187,6 +190,57 @@ def test_web_session_uses_server_state_and_bootstrap_cookie(tmp_path):
 
     assert bootstrap.called
     assert read_json(state_path)["web"]["jsessionid"] == "valid-session"
+
+
+def test_web_session_accepts_explicit_trusted_https_destinations():
+    for location in (
+        "https://smartthingsfind.samsung.com",
+        "https://smartthingsfind.samsung.com:443/",
+    ):
+        response = httpx.Response(
+            302,
+            headers={"location": location},
+            request=httpx.Request("GET", "https://smartthingsfind.samsung.com/login.do"),
+        )
+
+        SamsungAuth._accept_web_login_response(response)
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        None,
+        "/relative-destination",
+        "//smartthingsfind.samsung.com/scheme-relative",
+        "https://evil.example/collect",
+        "https://smartthingsfind.samsung.com:invalid/",
+        "https://smartthingsfind.samsung.com:/",
+        "https://smartthingsfind.samsung.com:444/",
+        "https://user@smartthingsfind.samsung.com/",
+        "https://@smartthingsfind.samsung.com/",
+    ],
+)
+def test_web_session_rejects_login_redirect_without_explicit_trusted_destination(location):
+    headers = {"location": location} if location is not None else {}
+    response = httpx.Response(
+        302,
+        headers=headers,
+        request=httpx.Request("GET", "https://smartthingsfind.samsung.com/login.do"),
+    )
+
+    with pytest.raises(SecurityError, match="untrusted destination"):
+        SamsungAuth._accept_web_login_response(response)
+
+
+def test_web_session_requires_login_response_to_issue_a_new_cookie():
+    response = httpx.Response(
+        302,
+        headers={"location": "https://smartthingsfind.samsung.com"},
+        request=httpx.Request("GET", "https://smartthingsfind.samsung.com/login.do"),
+    )
+
+    with pytest.raises(SamsungAuthError, match="did not issue a web Find session cookie"):
+        SamsungAuth._web_login_cookie(response)
 
 
 def test_validate_web_cookie_rejects_invalid_responses():
