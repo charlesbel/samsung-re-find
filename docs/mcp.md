@@ -1,6 +1,6 @@
 # Samsung Find MCP Server
 
-The `samsung-re-find-mcp` executable (legacy alias `samsung-find-mcp`) implements the Model Context Protocol (MCP) over `stdio`, allowing local AI agents (such as Hermes, Claude Desktop, Goose, Cursor) to securely inspect device status and retrieve locations without manual credential management.
+The `samsung-re-find-mcp` executable (legacy alias `samsung-find-mcp`) implements the Model Context Protocol (MCP) over `stdio`. After the initial interactive account setup, local AI agents can reuse the protected local state to inspect device status and retrieve locations through narrow tools.
 
 > **Disclaimer:** Unofficial reverse-engineered Samsung Find SDK, JSON CLI & MCP server. Not affiliated with, endorsed by, or supported by Samsung Electronics or SmartThings.
 
@@ -37,11 +37,11 @@ samsung-re-find-mcp --allow-effects ring,tracking
    - Parameters: `query` (string, required)
 
 4. `samsung_find_get_last_location`
-   - Description: Retrieve the last known passive GPS fix without triggering fresh device polling.
+   - Description: Retrieve the last known location without requesting a new device fix.
    - Parameters: `query` (string, required)
 
 5. `samsung_find_request_location`
-   - Description: Request an active GPS location refresh from the device and wait for a fix. This can wake the device or consume battery; its MCP annotations are not read-only or idempotent.
+   - Description: Request an active location update from the device and wait for a fix. This can wake the device or consume battery; its MCP annotations are not read-only or idempotent.
    - Parameters: `query` (string, required), `poll_seconds` (integer, default 180)
 
 6. `samsung_find_check_connection`
@@ -57,7 +57,7 @@ These tools perform physical or audible changes to user devices. They are disabl
    - Parameters: `query` (string, required), `status` (`"start"` or `"stop"`), `message` (string, optional), `confirm` (must be exactly `true`).
 
 2. `samsung_find_set_tracking`
-   - Description: Toggle continuous lost-device tracking.
+   - Description: Toggle the continuous-tracking operation exposed by the backend.
    - Parameters: `query` (string, required), `enabled` (boolean, required), `confirm` (must be exactly `true`).
 
 Enabling a tool at server startup does not authorize an individual effect: each call must also include `confirm: true` after the user has explicitly approved the target and action.
@@ -72,7 +72,7 @@ Enabling a tool at server startup does not authorize an individual effect: each 
 
 ## Security Guarantees
 
-- **No Remote Network Listening:** MCP server runs strictly via local `stdio`.
+- **No Inbound Network Listener:** MCP transport uses local `stdio`; tool calls still make outbound HTTPS requests to allowlisted Samsung services.
 - **No Arbitrary Dispatchers:** Only narrow, hardcoded, allowlisted functions are exposed.
 - **Redaction:** Device IDs and sensitive internal parameters are masked unless explicitly requested.
 - **Fail-Closed:** Calling disabled side-effect tools fails immediately before network I/O.

@@ -34,14 +34,21 @@ with SamsungFindClient.from_config(config) as client:
         print(f"Coordinates: {location.latitude}, {location.longitude}")
         print(f"Accuracy: {location.accuracy_m}m, Fresh: {location.is_fresh}")
 
-    # Request fresh active GPS fix from device
+    # Request a newer location fix from the device
     fresh_loc: LocationResult = client.request_location("Galaxy S24", poll_seconds=180)
 
     # 3. Check connectivity & battery
     status = client.check_connection("SmartTag2")
-    print(f"Reachable: {status.success}, Battery: {status.battery or 'unknown'}")
+    battery = status.battery if status.battery is not None else "unknown"
+    print(f"Reachable: {status.success}, Battery: {battery}")
+```
 
-    # 4. Ring device or toggle tracking (active commands)
+## Operations with user-visible effects
+
+The SDK does not add the CLI/MCP confirmation layer. Obtain explicit user authorization for the target and effect before calling these methods:
+
+```python
+with SamsungFindClient.from_config(config) as client:
     ring_result = client.ring("SmartTag2", status="start")
     track_result = client.set_tracking("Galaxy S24", enabled=True)
 ```

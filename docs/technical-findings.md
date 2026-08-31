@@ -32,14 +32,14 @@ On a recent Galaxy phone, the direct operation completed in approximately three 
 
 - `in_progress` is not terminal.
 - Only terminal `success` or `failed` results stop polling early.
-- The complete operation JSON returned by the CLI omits the internal `reqId`, while the poller retains it privately for strict current-request filtering.
+- The backend operation payload contains an internal `reqId`; the poller retains it for current-request filtering, while the public v1 CLI model exposes only the normalized operation result.
 - The internal operation helper enforces a closed allowlist containing only connection check, location, ring, and tracking start/stop.
 - The helper has no generic caller-supplied payload parameter. Only typed ring status/message fields can be added, and only for `RING`.
 - Operation and ring fields must be exact native strings, preventing deceptive subclasses from bypassing comparisons.
 - Destructive operation names and invalid typed fields are rejected before a web session is opened.
 - Results are filtered by both operation type and the current `reqId`.
 - Old completed operations are never substituted when the current request has no result yet.
-- Freshness compares the timestamp before and after the active operation; `fresh_location_obtained` is not inferred merely from request acceptance.
+- Freshness compares the timestamp before and after the active operation; the public `is_fresh` field is not inferred merely from request acceptance.
 
 ### Location parsing
 

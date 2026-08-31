@@ -19,17 +19,14 @@ This document captures the audit baseline for `samsung-find-agent` at release 0.
 1. `install-handler` - Register desktop redirect URI handler for `ms-app://`
 2. `auth-start` - Begin Samsung Account interactive OAuth flow
 3. `auth-complete` - Exchange redirect callback for master and scoped credentials
-4. `auth-refresh` - Manually rotate scoped access/refresh token pairs
-5. `auth-reissue` - Force reissuance of scoped tokens using master token
-6. `status` - Report validity and expiration of local credentials
-7. `verify` - Check remote connectivity to SmartThings API
-8. `devices` - List devices registered with Samsung Find
-9. `capabilities` - List supported features for a specific device
-10. `location` - Retrieve last reported GPS location
-11. `request-location` - Request an active location refresh from device
-12. `check-connection` - Test device connectivity and report battery level
-13. `ring` - Trigger device ring (alarm)
-14. `set-tracking` - Toggle lost-device location tracking
+4. `status` - Report local authentication state
+5. `verify` - Check the live SmartThings/Find session
+6. `devices` - List devices registered with Samsung Find
+7. `capabilities` - List exposed features for a specific device
+8. `check` - Test device connectivity and report battery information when available
+9. `ring` - Start or stop device ringing
+10. `track` - Start or stop continuous tracking
+11. `locate` - Read the last reported location or request an active update
 
 ## State Storage in v0.1.0
 

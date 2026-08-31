@@ -127,4 +127,4 @@ samsung-re-find-mcp
 samsung-re-find-mcp --allow-effects ring,tracking
 ```
 
-Read/safe tools are available by default. Ringing and tracking tools are absent unless enabled at server startup and still require confirmation in each call. See [MCP Reference](mcp.md).
+Passive reads plus active location and connectivity tools are available by default. Ringing and tracking tools are absent unless enabled at server startup and still require confirmation in each call. See [MCP Reference](mcp.md).

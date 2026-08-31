@@ -50,3 +50,14 @@ def test_readme_uses_current_identity_and_avoids_release_overclaims() -> None:
     assert "It does not imply that other Samsung operations do not exist" in readme
     assert "samsung-re-health" in readme
     assert "primary interactive login provider" not in readme
+    assert "## Why this project exists" in readme
+    assert "uTag" in readme
+    assert "HA-SmartThings-Find" in readme
+    assert "If you are an AI agent" in readme
+    assert 'AGENT_SKILLS_DIR="/path/configured/by/your-agent"' in readme
+    assert 'cp -R .skills/samsung-re-find "$AGENT_SKILLS_DIR/"' in readme
+    assert 'cp -R .skills/samsung-account-auth "$AGENT_SKILLS_DIR/"' in readme
+    assert "~/.hermes/skills" not in readme
+    agent_doc = (ROOT / "docs" / "agent-integration.md").read_text(encoding="utf-8")
+    assert 'AGENT_SKILLS_DIR="/path/configured/by/your-agent"' in agent_doc
+    assert "~/.hermes/skills" not in agent_doc

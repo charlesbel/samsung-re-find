@@ -23,7 +23,7 @@ This document details the migration path from `samsung-find-agent` v0.1.0 to `sa
      *(or legacy alias: `samsung-find migrate-master`)*
    - This reads your existing legacy `state.json`, constructs the versioned `master-state-v1` file and clean derived state, and saves them atomically with mode `0600`.
    - Your existing legacy `state.json` file is left byte-for-byte intact.
-   - No interactive re-login or credentials entry is required.
+   - The migration command itself is local and does not request an interactive login. A later login can still be required if the migrated Samsung authorization has expired or been revoked.
 
 4. **SDK Modernization:**
    - Direct typed facade available via `from samsung_find import SamsungFindClient, FindConfig`.
@@ -31,4 +31,4 @@ This document details the migration path from `samsung-find-agent` v0.1.0 to `sa
 
 5. **MCP Server:**
    - Stdio MCP server available via `samsung-re-find-mcp` (with `pip install 'samsung-re-find[mcp]'`).
-   - Read-only tools enabled by default; side-effect tools (`ring`, `track`) gated behind explicit `--allow-effects`.
+   - Ring and tracking tools are disabled by default and gated behind explicit `--allow-effects`. Active location and connection checks remain available by default and can contact or wake a device.

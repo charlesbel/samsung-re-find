@@ -8,7 +8,7 @@ This document describes the authentication architecture implemented by `samsung-
 
 Earlier SmartThings Find integrations commonly ask users to copy `JSESSIONID` and `WMONID` from a browser. That can enable the legacy web API, but it leaves the integration unable to recover when the session expires.[3][4][6]
 
-Samsung's application authentication flow provides a stronger root of trust: a `userauth_token` associated with the Samsung Account. uTag documents that the same master token can authorize both Samsung Find and SmartThings scopes and can issue new scoped tokens after the ordinary refresh-token window ends.[1]
+Samsung's application authentication flow provides a more durable reauthorization root: a powerful `userauth_token` associated with the Samsung Account. uTag documents that the same master token can authorize both Samsung Find and SmartThings scopes and can issue new scoped tokens after the ordinary refresh-token window ends.[1] Its persistence improves recovery but also increases the impact of disclosure, so it must be protected as a primary credential.
 
 This client therefore uses a four-layer chain:
 
@@ -52,7 +52,7 @@ The client currently uses:
 
 Each scoped authorization uses PKCE. Refresh tokens rotate and are single-use: a successful refresh response replaces both the access token and the refresh token.[1] The state update therefore runs under an exclusive file lock and is committed atomically.
 
-A `401` or `403` causes one forced refresh and one retry. If refresh fails, the client authorizes a new scoped pair with the master token.
+For an idempotent authenticated read, a `401` or `403` causes one forced refresh and one retry. Non-idempotent device actions are not automatically repeated: the client can refresh authentication, but it returns an error instead of risking a duplicate effect.
 
 ## Legacy SmartThings Find web bridge
 
@@ -66,7 +66,7 @@ The client validates every cached web cookie before use. An invalid cookie is di
 
 ## Local state and concurrency
 
-Default files:
+Default Linux files (other platforms use their `platformdirs` configuration/state locations):
 
 ```text
 ~/.config/samsung-account/master.json
@@ -80,7 +80,7 @@ Security properties:
 - state, pending data, callbacks, and lock files use mode `0600`;
 - parent directories use mode `0700`;
 - writes use a temporary file, `fsync`, and `os.replace`;
-- refresh and reissue operations are serialized with `fcntl.flock`;
+- refresh and reissue operations are serialized with the interprocess locking mechanism selected for the current platform;
 - the callback file is consumed and deleted;
 - normal errors never include Samsung response bodies.
 

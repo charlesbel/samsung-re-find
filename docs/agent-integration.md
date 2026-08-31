@@ -8,11 +8,11 @@
 
 1. **MCP (Recommended for Agent Environments):**
    - Run stdio MCP server: `samsung-re-find-mcp` (or with `--allow-effects ring,tracking`).
-   - Narrow, typed tools with safety boundaries and default read-only access.
+   - Narrow, typed tools with explicit effect boundaries. Ring and tracking are disabled by default, but active location and connectivity tools are enabled and may contact or wake a device.
 
 2. **CLI JSON Mode (Recommended for Scripting):**
    - Output on `stdout` is wrapped in versioned envelopes (`schema_version: "1.0"`).
-   - Strict exit codes (0, 2, 3, 4, 5, 6).
+   - Exit codes `0` through `5`; see [CLI Reference](cli.md#exit-codes) for the normative mapping.
 
 ## Recommended Decision Flow
 
@@ -20,7 +20,7 @@
 2. Run `samsung_find_list_devices` when identifying user devices.
 3. Check supported capabilities with `samsung_find_get_capabilities`.
 4. Prefer passive location (`samsung_find_get_last_location`) for inventory/status checks.
-5. Use active GPS refresh (`samsung_find_request_location`) only when real-time fix is needed.
+5. Use an active location request (`samsung_find_request_location`) only when a newer fix is needed.
 6. Require explicit user confirmation before audible ringing or toggling continuous tracking.
 7. Never attempt to synthesize unsupported lock, wipe, lost-mode, or payment operations.
 
@@ -31,10 +31,13 @@ The portable skills are located under `.skills/` at the repository root:
 - `.skills/samsung-re-find/SKILL.md`
 - `.skills/samsung-account-auth/SKILL.md`
 
-For Hermes Agent:
+Determine the skills directory configured by the agent runtime instead of assuming a framework-specific path. Then copy both skill directories:
 
 ```bash
-mkdir -p ~/.hermes/skills/smart-home
-cp -R .skills/samsung-re-find ~/.hermes/skills/smart-home/
-cp -R .skills/samsung-account-auth ~/.hermes/skills/smart-home/
+AGENT_SKILLS_DIR="/path/configured/by/your-agent"
+mkdir -p "$AGENT_SKILLS_DIR"
+cp -R .skills/samsung-re-find "$AGENT_SKILLS_DIR/"
+cp -R .skills/samsung-account-auth "$AGENT_SKILLS_DIR/"
 ```
+
+If that directory is unknown, consult the runtime's documentation or configuration before copying the skills.

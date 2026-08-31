@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-08-31
+
+### Changed
+- Reworked the README to explain the project's headless automation purpose, its relationship to the official Samsung experience and public SmartThings API, and its differences from uTag, Samsung Pinger, and Home Assistant integrations.
+- Made bundled-skill installation instructions harness-neutral by requiring the agent runtime's configured skills directory instead of a framework-specific path.
+- Clarified passive reads, active device contact, audible effects, persistent tracking, retry behavior, location freshness, and the distinction between backend payloads and public models.
+- Corrected the shared master-state contract: either Samsung RE project may create or replace the neutral master during an explicit interactive bootstrap, while ordinary service operations consume it without implicit replacement.
+
+### Fixed
+- Corrected historical CLI commands and exit-code documentation in the 0.1 baseline and agent guide.
+- Scoped privacy, network, and security claims to the interfaces and controls that actually implement them.
+- Added documentation contracts for product positioning and portable agent-skill installation.
+
 ## [0.2.0] - 2026-08-30
 
 ### Added

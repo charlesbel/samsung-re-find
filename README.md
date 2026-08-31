@@ -11,6 +11,25 @@ An unofficial Python SDK, JSON CLI and MCP server for Samsung Find.
 
 > This project is reverse-engineered and is not affiliated with or endorsed by Samsung or SmartThings. It uses private APIs that may change without notice. Use it only with accounts and devices you are authorized to access.
 
+## Why this project exists
+
+`samsung-re-find` targets headless Python automation. The community projects reviewed below solve useful but different problems:
+
+- Samsung's official SmartThings Find application and website are the functional reference for locating and controlling Galaxy devices, but they are human-facing surfaces rather than a documented developer API.[4]
+- The inspected public SmartThings Core SDK exposes SmartThings devices, locations, rooms and automations, but no documented Samsung Find endpoint; its `locations` are SmartThings place containers, not the live positions of Find devices.[5]
+- [uTag](https://github.com/KieronQuinn/uTag) is an Android application focused on bringing extensive SmartTag functionality to non-Samsung Android devices.[1]
+- [Samsung Pinger](https://github.com/VityaSchel/samsung-pinger) is a macOS ringing widget whose documented setup requires manually copying web cookies and a device ID.[2]
+- [HA-SmartThings-Find](https://github.com/coldfire88/HA-SmartThings-Find) integrates location, battery and ringing into Home Assistant and now documents persistent OAuth/PKCE authentication, but its public surface is a Home Assistant integration rather than a standalone Python SDK, JSON CLI or MCP server.[3]
+
+`samsung-re-find` is for scripts, agents and services that need a reusable **headless interface**: one interactive Samsung Account login, persistent recovery of service tokens and the Find web session, then the same typed operations through a Python SDK, versioned JSON CLI and gated stdio MCP server. It does not replace uTag's richer on-device SmartTag experience or Home Assistant's entity model, and it does not yet decode end-to-end-encrypted SmartTag locations.
+
+What this project adds for that use case:
+
+- persistent recovery beyond manually copied web cookies, including scoped-token rotation/reissue and web-session regeneration;
+- one standalone operation model shared by the SDK, JSON CLI and MCP tools rather than an Android or Home Assistant-only surface;
+- explicit separation between passive reads, active device contact, audible ringing and persistent tracking;
+- versioned JSON envelopes, typed models and local state suitable for scripts, cron jobs and AI agents.
+
 ## What is included
 
 - a typed synchronous SDK, imported as `samsung_find`;
@@ -19,7 +38,23 @@ An unofficial Python SDK, JSON CLI and MCP server for Samsung Find.
 - a reusable Samsung Account login flow that stores a neutral master authorization locally;
 - portable agent skills in `.skills/`.
 
-The current command set is the scope implemented and tested in this release, not a complete list of operations supported by Samsung's servers. Contributions for additional devices, decoded payloads and carefully designed operations are welcome. See [Contributing](#contributing).
+<details>
+<summary><strong>If you are an AI agent, install the bundled skills first</strong></summary>
+
+First determine the local skills directory configured by your agent runtime; do not assume a framework-specific path. Set `AGENT_SKILLS_DIR` to that existing or intended directory, then copy the repository's two portable skills before operating the CLI or MCP server:
+
+```bash
+AGENT_SKILLS_DIR="/path/configured/by/your-agent"
+mkdir -p "$AGENT_SKILLS_DIR"
+cp -R .skills/samsung-re-find "$AGENT_SKILLS_DIR/"
+cp -R .skills/samsung-account-auth "$AGENT_SKILLS_DIR/"
+```
+
+Consult your agent runtime's documentation or configuration if its skills directory is unknown. The operational skill defines device selection, location freshness and effect-confirmation rules; the account skill defines the interactive login and repair flow. Installing a skill does not install the Python package itself.
+
+</details>
+
+The current command set is implemented and covered by automated tests; live-device validation varies by operation and device category. It is not a complete list of operations supported by Samsung's servers. Contributions for additional devices, decoded payloads and carefully designed operations are welcome. See [Contributing](#contributing).
 
 ## Samsung RE projects
 
@@ -137,7 +172,8 @@ with SamsungFindClient.from_config(config) as client:
         print(location.latitude, location.longitude, location.is_fresh)
 
     status = client.check_connection("SmartTag2")
-    print(status.success, status.battery or "unknown")
+    battery = status.battery if status.battery is not None else "unknown"
+    print(status.success, battery)
 ```
 
 The SDK exposes ring and tracking methods directly. An application using the SDK is responsible for obtaining the user's consent before calling them. The SDK reference is in [docs/sdk.md](docs/sdk.md).
@@ -159,7 +195,7 @@ It exposes six tools by default:
 - `samsung_find_request_location`
 - `samsung_find_check_connection`
 
-The first four tools inspect available state. `request_location` and `check_connection` contact the device actively and may wake it or consume battery; they are therefore not annotated as read-only or idempotent.
+The first four tools read Samsung-hosted account/device state without explicitly requesting a new device measurement; they are not offline local-cache tools. `request_location` and `check_connection` contact the device actively and may wake it or consume battery; they are therefore not annotated as read-only or idempotent.
 
 The ring and tracking tools are not registered unless the server is started with an explicit allowlist:
 
@@ -222,3 +258,11 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Sources
+
+[1] https://github.com/KieronQuinn/uTag
+[2] https://github.com/VityaSchel/samsung-pinger
+[3] https://github.com/coldfire88/HA-SmartThings-Find
+[4] https://www.samsung.com/uk/apps/smartthings-find
+[5] https://github.com/SmartThingsCommunity/smartthings-core-sdk

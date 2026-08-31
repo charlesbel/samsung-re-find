@@ -59,8 +59,9 @@ The GitHub repository must also contain an environment named `pypi`. Optional en
 After the release commit is on `main`, all CI checks are green, and the pending publisher is configured:
 
 ```bash
-git tag -a 0.2.0 -m "samsung-re-find 0.2.0"
-git push origin 0.2.0
+VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+git tag -a "$VERSION" -m "samsung-re-find $VERSION"
+git push origin "$VERSION"
 ```
 
 Do not upload the same artifacts manually while the workflow is running. PyPI distributions are immutable; if publication partially succeeds, inspect PyPI and the workflow before retrying. Never delete and recreate a tag that has already produced public artifacts.
@@ -69,8 +70,8 @@ Do not upload the same artifacts manually while the workflow is running. PyPI di
 
 Verify independently:
 
-1. the PyPI JSON endpoint reports version `0.2.0` and both artifacts;
-2. a fresh environment can install `samsung-re-find[mcp]==0.2.0` from PyPI;
+1. the PyPI JSON endpoint reports `$VERSION` and both artifacts;
+2. a fresh environment can install `samsung-re-find[mcp]==$VERSION` from PyPI;
 3. canonical CLI/MCP help and stdio negotiation work;
-4. GitHub shows a non-draft `0.2.0` release with matching assets;
+4. GitHub shows a non-draft `$VERSION` release with matching assets;
 5. repository links and README badges resolve to the renamed public repository.

@@ -5,7 +5,8 @@ This specification defines the neutral, shared authentication state schema (`mas
 ## Architecture & Responsibilities
 
 ```text
-Samsung Account interactive login (samsung-re-find)
+Samsung Account interactive login
+ (samsung-re-find or samsung-re-health)
                     │
                     ▼
      Shared Neutral Master State v1
@@ -16,14 +17,14 @@ Samsung Account interactive login (samsung-re-find)
   (derived tokens)     (derived tokens & mirror)
 ```
 
-- **Primary Writer:** `samsung-re-find` interactive authentication flow (`auth-start` / `auth-complete`).
-- **Readers:** `samsung-re-find` and `samsung-re-health`.
-- **Health Write Policy:** Strict read-only. `samsung-re-health` NEVER writes or modifies the master state file.
-- **Derived Token Storage:** Service-specific derived tokens (e.g. Find `offline.access`, SmartThings `iot.client`, web session cookies, Health sync checkpoints) are stored strictly in their respective service state files (`samsung-find/state.json`, `samsung-health/state.json`) and NEVER in `master.json`.
+- **Explicit writers:** either `samsung-re-find` or `samsung-re-health` may create or replace the master through its interactive `auth-start` / `auth-complete` flow.
+- **Ordinary readers:** service initialization, refresh and synchronization read the master but do not rewrite it.
+- **Generation boundary:** replacing the master creates a new generation; each service rejects or reinitializes derived credentials from an older generation.
+- **Derived token storage:** Find tokens and web cookies remain in `samsung-find/state.json`; Health tokens and registration state remain in `samsung-health-cloud/state.json`; Health records and checkpoints remain in the Health SQLite mirror. None of these derived values belongs in `master.json`.
 
 ## Resolution Priority
 
-Both repositories resolve the master state location using the identical priority order:
+The shared contract defines this resolution priority; implementations should preserve it or document a versioned incompatibility:
 
 1. Explicit credential provider injected by the Python SDK.
 2. CLI/MCP `--master-state` argument.
@@ -41,7 +42,7 @@ The formal JSON Schema is located at `schemas/master-state-v1.schema.json`.
 Key fields:
 - `schema`: Constant `"io.github.charlesbel.samsung-account.master"`
 - `schema_version`: Constant integer `1`
-- `generation`: Opaque unique string identifier (e.g. UUID), regenerated whenever credentials rotate.
+- `generation`: Opaque unique string identifier (e.g. UUID), regenerated when an explicit account bootstrap replaces the master authorization. Ordinary service-token refresh does not rotate it.
 - `created_at`: Unix timestamp (float/int).
 - `updated_at`: Unix timestamp (float/int).
 - `account`: Contains `login_id` (string) and optional `user_id`.
@@ -50,7 +51,7 @@ Key fields:
 
 ## Security & Storage Properties
 
-- **File Permissions:** Master file mode `0600` (`-rw-------`), parent directory mode `0700` (`drwx------`).
+- **File Permissions:** On POSIX platforms, master file mode `0600` (`-rw-------`) and parent directory mode `0700` (`drwx------`); other platforms use the strongest equivalent checks implemented by the client.
 - **Atomic Commits:** Writes are staged to a temporary file in the same directory, followed by `fsync` and atomic rename (`os.replace`).
 - **Symlink Protection:** Readers and writers explicitly reject symlinks and non-owned files.
-- **Redaction:** In-memory models implement strict redaction in `__repr__` and `__str__`. Tokens and sensitive fields are never printed in logs, errors, or CLI outputs.
+- **Redaction:** Project-owned `__repr__`, `__str__`, CLI status and normal error serializers redact known token fields. Raw state files, debuggers, process memory and caller-defined SDK logging remain outside that guarantee.
