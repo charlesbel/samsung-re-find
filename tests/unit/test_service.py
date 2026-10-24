@@ -142,12 +142,16 @@ def test_find_service_operations_success_in_progress_and_failed():
             "result_code": None,
             "result": "in_progress",
             "battery_percent": None,
+            "left_battery_percent": 84,
+            "right_battery_percent": 91,
         },
     }
     check_res = service.check_connection("Galaxy S24")
     assert check_res.accepted is True
     assert check_res.success is False
     assert check_res.result == "in_progress"
+    assert check_res.left_battery == "84"
+    assert check_res.right_battery == "91"
 
     # 3. Failed operation
     mock_client.track.return_value = {

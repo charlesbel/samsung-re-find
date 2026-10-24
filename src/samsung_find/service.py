@@ -124,6 +124,10 @@ class FindService:
         result_code = op_details.get("result_code")
         battery_pct = op_details.get("battery_percent")
         battery_str = str(battery_pct) if battery_pct is not None else None
+        left_battery_pct = op_details.get("left_battery_percent")
+        left_battery_str = str(left_battery_pct) if left_battery_pct is not None else None
+        right_battery_pct = op_details.get("right_battery_percent")
+        right_battery_str = str(right_battery_pct) if right_battery_pct is not None else None
 
         return OperationResult(
             operation=str(raw_op.get("requested_operation") or default_op),
@@ -134,6 +138,8 @@ class FindService:
             result_code=str(result_code) if result_code is not None else None,
             result=str(result_label) if result_label is not None else None,
             battery=battery_str,
+            left_battery=left_battery_str,
+            right_battery=right_battery_str,
             message=raw_op.get("message") or op_details.get("message"),
         )
 

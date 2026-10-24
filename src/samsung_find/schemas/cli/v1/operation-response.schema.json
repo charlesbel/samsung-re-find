@@ -10,6 +10,8 @@
     "status_code": { "type": ["string", "null"] },
     "message": { "type": ["string", "null"] },
     "battery": { "type": ["string", "null"] },
+    "left_battery": { "type": ["string", "null"] },
+    "right_battery": { "type": ["string", "null"] },
     "details": { "type": "object" }
   }
 }

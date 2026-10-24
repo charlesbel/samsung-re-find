@@ -128,6 +128,8 @@ class OperationResult:
     result_code: str | None = None
     result: str | None = None
     battery: str | None = None
+    left_battery: str | None = None
+    right_battery: str | None = None
     message: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -146,6 +148,10 @@ class OperationResult:
             data["result"] = self.result
         if self.battery is not None:
             data["battery"] = self.battery
+        if self.left_battery is not None:
+            data["left_battery"] = self.left_battery
+        if self.right_battery is not None:
+            data["right_battery"] = self.right_battery
         if self.message is not None:
             data["message"] = self.message
         return data

@@ -266,6 +266,18 @@ class SamsungFindClient:
         if battery is not None:
             with suppress(ValueError, TypeError):
                 battery_val = int(battery)
+        extra = raw.get("extra")
+        left_battery_val = None
+        right_battery_val = None
+        if isinstance(extra, dict):
+            left = extra.get("left")
+            right = extra.get("right")
+            if isinstance(left, dict) and left.get("battery") is not None:
+                with suppress(ValueError, TypeError):
+                    left_battery_val = int(left["battery"])
+            if isinstance(right, dict) and right.get("battery") is not None:
+                with suppress(ValueError, TypeError):
+                    right_battery_val = int(right["battery"])
         result = "pending"
         if (
             (operation_type == "TRACK_LOCATION_START" and status_code == "2100")
@@ -284,6 +296,8 @@ class SamsungFindClient:
             "result_code": result_code,
             "result": result,
             "battery_percent": battery_val,
+            "left_battery_percent": left_battery_val,
+            "right_battery_percent": right_battery_val,
             "message": raw.get("message") or raw.get("detail"),
         }
 

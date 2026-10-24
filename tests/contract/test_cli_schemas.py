@@ -112,6 +112,8 @@ class SyntheticMockService:
             request_id="req-synthetic-check",
             status_code="200",
             battery="85",
+            left_battery="84",
+            right_battery="91",
             message="Device is reachable",
         )
 
@@ -281,6 +283,9 @@ def test_cli_operation_contract(capsys, envelope_schema, operation_schema, argv,
     jsonschema.Draft202012Validator(operation_schema).validate(payload["data"])
     assert payload["data"]["operation"] == expected_op
     assert payload["data"]["success"] is True
+    if expected_op == "CHECK_CONNECTION":
+        assert payload["data"]["left_battery"] == "84"
+        assert payload["data"]["right_battery"] == "91"
 
 
 @pytest.mark.parametrize("include_ids", [False, True])
